@@ -66,9 +66,13 @@ four-quadrant panel (open / blind / hidden / unknown) so you can see what is *as
 pages are a list of **independent single-choice questions** — never one bundled pick — and each
 choice copies a paste-ready receipt back into the chat.
 
+![An intent page](docs/page-intent.png)
+
 Thirteen carriers, picked by the shape of the content: `flow`, `timeline`, `stats`, `bars`,
 `compare`, `callout`, `loop`, `facts`, `tree`, `branch`, `sequence`, `graph`, `state`.
 Report pages are written for people who never read code: no code blocks, no file names.
+
+![Step chain and branch diagram](docs/page-blocks.png)
 
 ## The self-check
 
