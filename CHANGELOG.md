@@ -4,6 +4,25 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.1.3] — 2026-11-22
+
+Found while smoke-testing the restarted session: the common `cd <dir> && …`
+prefix was treated as a mutation, so a legitimate write into `.pi/` was refused
+with the destructive-command wording.
+
+### Fixed
+
+- **A bare `cd`/`pushd`/`chdir` only changes scope.** It is no longer counted as
+touching files when its target stays inside the workspace or the temp dir, so
+`cd <workspace> && echo hi > .pi/flow/note.md` works again in every pre-approval
+phase — while `cd src && rm -rf build` and `cd / && echo hi > .pi/x.md` are still
+refused.
+
+### Tests
+
+- 76 checks (was 73): `cd` inside the workspace, `cd` into a subdirectory before a
+destructive command, and `cd` out of the workspace before a scratch redirect.
+
 ## [0.1.2] — 2026-11-22
 
 Second audit pass: two full code reviews plus a doc-vs-code review, an external

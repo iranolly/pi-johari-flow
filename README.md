@@ -5,7 +5,7 @@ agent **prove it understood you before it writes anything** — intent page, fac
 option design, cross review, supervised execution, HTML report. Enforced by hooks, not by good manners.
 
 ```bash
-pi install git:github.com/iranolly/pi-johari-flow@v0.1.2
+pi install git:github.com/iranolly/pi-johari-flow@v0.1.3
 ```
 
 Already installed? `pi update --extensions` pulls the newest tag, then `/reload` inside a session
@@ -160,12 +160,12 @@ Add `.pi/` to your `.gitignore` if you do not want the generated pages in versio
 ## Development
 
 ```bash
-npm test        # 69 checks, no dependencies: node --experimental-strip-types tests/run.mjs
+npm test        # 76 checks, no dependencies: node --experimental-strip-types tests/run.mjs
 ```
 
 The suite links the three host packages Pi already ships and drives the extension through the
 same hooks Pi uses (gates, phase machine, page writing, CSS sanitiser, self-check, `flow_ask`,
-`setGoal`, `abort`). See `CHANGELOG.md` for what changed in 0.1.2.
+`setGoal`, `abort`). See `CHANGELOG.md` for what changed in 0.1.3.
 
 ## License
 

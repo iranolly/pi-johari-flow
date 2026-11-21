@@ -619,7 +619,22 @@ function pathTokens(norm: string): string[] {
 }
 
 /** Does every path this segment touches live in the scratch area? */
+/** A bare `cd`/`pushd` only changes scope; it writes nothing. */
+const DIR_CHANGE_RE = /^(?:cd|pushd|chdir)\s+(?:"([^"]*)"|'([^']*)'|([^\s&|;]+))\s*$/i;
+
+/** True when a directory change stays inside the workspace, false when it
+ *  leaves it, undefined when the segment is not a directory change at all. */
+function directoryScope(cwd: string, seg: Segment): boolean | undefined {
+	const m = DIR_CHANGE_RE.exec(seg.raw.trim());
+	if (!m) return undefined;
+	const target = m[1] ?? m[2] ?? m[3] ?? "";
+	if (!target) return undefined;
+	const abs = resolve(cwd, target);
+	return isInside(cwd, abs) || isInside(tmpdir(), abs);
+}
 function segmentStaysInScratch(cwd: string, seg: Segment): boolean {
+	const scope = directoryScope(cwd, seg);
+	if (scope !== undefined) return scope;
 	const targets = [...redirectTargets(seg.raw), ...pathTokens(seg.norm)];
 	if (targets.length === 0) return false;
 	return targets.every((t) => inScratchDir(cwd, t));
@@ -702,7 +717,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.2";
+const PKG_VERSION = "0.1.3";
 
 /* --------------------------------------------------------------------- init */
 

@@ -174,6 +174,21 @@ const firstLine = (s) => String(s).split("\n")[0];
 		["B24 stash list allowed", { toolName: "bash", input: { command: "git stash list" } }, false],
 		["B25 awk float compare allowed", { toolName: "bash", input: { command: "awk '$3 > 1.5' data.txt" } }, false],
 		["B26 scratch redirect allowed", { toolName: "bash", input: { command: "echo hi > .pi/flow/note.md" } }, false],
+		[
+			"B27 cd inside workspace + scratch redirect allowed",
+			{ toolName: "bash", input: { command: `cd "${WORK}" && echo hi > .pi/flow/note2.md` } },
+			false,
+		],
+		[
+			"B28 cd to a subdir does not launder a destructive command",
+			{ toolName: "bash", input: { command: `cd "${WORK}/src" && rm -rf build` } },
+			true,
+		],
+		[
+			"B29 cd out of the workspace does not launder a scratch redirect",
+			{ toolName: "bash", input: { command: `cd / && echo hi > .pi/flow/x.md` } },
+			true,
+		],
 	];
 	for (const [id, event, shouldBlock] of cases) {
 		const out = await h.fire("tool_call", event);
