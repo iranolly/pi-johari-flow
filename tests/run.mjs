@@ -237,6 +237,16 @@ const firstLine = (s) => String(s).split("\n")[0];
 	const copyPath = /decodeURIComponent\(p\)/.test(html) && !/location\.href\.replace/.test(html);
 	check("D4 copy-path gives a usable path", copyPath);
 
+	// every page must ship script that parses: one stray escape and every button dies
+	const scriptSrc = (html.match(/<script>([\s\S]*?)<\/script>/) ?? [null, ""])[1];
+	let parses = true;
+	try {
+		new Function(scriptSrc);
+	} catch {
+		parses = false;
+	}
+	check("D6 page script parses", parses && scriptSrc.length > 100);
+
 	check("D5 done needs the report", h.text(await h.plan({ action: "advance", to: "report" })).includes("已推进"));
 }
 

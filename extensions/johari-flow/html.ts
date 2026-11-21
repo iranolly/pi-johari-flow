@@ -534,14 +534,15 @@ tr:last-child td{border-bottom:0}
 .looppill::before{content:"⟶";color:var(--fg-mute);margin-right:2px;font-size:12px}
 .looppill:first-child::before{display:none}
 .loopback{
-  margin-top:14px;display:grid;grid-template-columns:minmax(240px,1fr) auto;gap:14px;align-items:end;
+  margin-top:14px;display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;
   font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--accent)
 }
-.loopback svg{display:block;width:100%;height:36px;overflow:visible;color:var(--accent-dim)}
+/* width is measured from the pill row by layoutLoops(), so fall back to a sane start */
+.loopback svg{display:block;flex:0 0 auto;width:300px;height:36px;overflow:visible;color:var(--accent-dim)}
 .loopback svg .dash{stroke:currentColor;stroke-width:1.4;fill:none;stroke-dasharray:5 4;stroke-linecap:round}
 .loopback svg .head{fill:currentColor;stroke:none}
 .loopback span{align-self:center;line-height:1.5}
-@media (max-width:720px){.loopback{grid-template-columns:1fr}}
+@media (max-width:720px){.loopback svg{width:100%!important}}
 
 /* facts */
 .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
@@ -1223,10 +1224,28 @@ export function renderPage(
   document.getElementById('copyAll').addEventListener('click', function(){
     copy(document.querySelector('.wrap').innerText);
   });
+  // The return arc must span exactly the pill row, not the whole container: measure
+  // the first and last pill and size the svg to match (re-measured on resize).
+  function layoutLoops(){
+    document.querySelectorAll('.loopline').forEach(function(line){
+      var back = line.nextElementSibling;
+      var svg = back && back.classList && back.classList.contains('loopback') ? back.querySelector('svg') : null;
+      if (!svg || !line.children.length) return;
+      var first = line.children[0].getBoundingClientRect();
+      var last = line.children[line.children.length - 1].getBoundingClientRect();
+      svg.style.width = Math.max(120, Math.round(last.right - first.left)) + 'px';
+    });
+  }
+  layoutLoops();
+  var loopTimer = null;
+  window.addEventListener('resize', function(){
+    clearTimeout(loopTimer);
+    loopTimer = setTimeout(layoutLoops, 120);
+  });
   document.getElementById('copyPath').addEventListener('click', function(){
     var p = location.pathname;
     try { p = decodeURIComponent(p); } catch (err) { /* keep raw */ }
-    if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);
+    if (/^\\/[A-Za-z]:/.test(p)) p = p.slice(1);
     copy(p);
   });
 })();
