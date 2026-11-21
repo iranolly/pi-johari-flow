@@ -19,7 +19,8 @@ description: Use when the user wants a task handled under the Johari-window deli
 2. **没有 HTML 页面，就没有确认。** 口头说「我理解你的需求了」不算，必须 `flow_page kind="intent"`。
 3. **每个用户可见的最终回复都落在开放区。** 结论 + 依据 + 未验证/风险 + 需要用户决定的事，四段齐全。**回复末尾必须由你自己写「乔哈里自检」八项**（见 §3）；扩展只校验不缺项、不替你写，缺了会提醒你补。
 4. **决策属于用户，不属于你。** 范围变更、不可逆操作、方案前提崩塌、同一处连续两次修不好 —— 一律 `flow_ask`。
-5. **调研与评审阶段只读。** 派出去的 sub agent 不许写文件；要动手就是 `execute` 阶段了。
+5. **批准前一律只读。** ② 调研 / ③ 设计 / ④ 评审 三个阶段里，`write`/`edit` 改项目文件、`sed -i`、`git apply`、`npm install`、`git commit` 都会被 `tool_call` hook 拦掉（`.md`/`.txt`/`.log`/`.json` 笔记与 `.pi/` 下的页面仍可写）；要动手就是 `execute` 阶段了。
+6. **没有派活工具就降级。** 若本环境不提供 `Agent`/`subagent`/`task` 之类工具，不要假装派了活：自己分饰多个视角逐项查证，并在页面与回复里写明「降级自查」。
 6. **收尾必须有报告页。** 没有 `flow_page kind="report"`，`advance to="done"` 会被拒。
 
 ---

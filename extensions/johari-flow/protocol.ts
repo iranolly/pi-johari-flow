@@ -32,14 +32,14 @@ const PHASE_DUTY: Record<Phase, string> = {
 		"4. 用户修正意图时用 `flow_plan {action:\"setGoal\", goal:\"<修正后原话>\"}`：它会改写 `state.goal`、作废已有确认并退回 intent；旧 goal 已写在 history 里，不要自己替用户拍板。",
 	].join("\n"),
 	research: [
-		"要做的事：派**只读** sub agent（scout / explore / net-research）并行调研，禁止它们改文件。",
+		"要做的事：派**只读** sub agent 并行调研，禁止它们改文件。若本环境没有派活工具，就自己分饰多个视角逐项查，并在结论里标注「降级自查」。",
 		"每个 sub agent 的任务描述里必须写清：要回答的问题、要产出的证据形态（file:line / URL / 命令输出）。",
 		"收集回来后把结论压成「事实 / 未知」两栏，未知项要么补调研，要么升级成必须问用户的决策点。",
 		"调研完成 -> `flow_plan {action:\"advance\", to:\"design\"}`。",
 	].join("\n"),
 	design: [
 		"要做的事：至少给出 2 个可选方案（含「什么都不做」的代价），每个方案写清影响面、成本、可回滚性。",
-		"派 impl / plan sub agent 并行出方案草案，你负责收敛与取舍，不要直接采纳第一份草案。",
+		"派计划/实现类 sub agent 并行出方案草案，你负责收敛与取舍，不要直接采纳第一份草案；没有派活工具就自己先写两份，再挑刺。",
 		"方案成型后用 `flow_page {kind:\"decision\"}` 出决策简报页，把选项列成可点击的回执。",
 		"用户选定后：先 `flow_plan {action:\"advance\", to:\"review\"}` 过交叉评审 —— 批准只在 ④ 交叉评审 阶段有效，在 ③ 直接 approve 会被拒。",
 	].join("\n"),
@@ -66,7 +66,7 @@ const PHASE_DUTY: Record<Phase, string> = {
 	report: [
 		"要做的事：用 `flow_page {kind:\"report\"}` 出完成报告页（目标 vs 实际、交付物、验证证据、偏差、遗留风险、下一步）。",
 		"报告里每一句结论都要能指到证据：文件路径、命令、测试输出、sub agent 结论。",
-		"**写给不看代码的人**：不贴代码、不写文件名/函数名/命令、不用术语；用 `stats` / `flow` / `timeline` / `compare` / `bars` / `callout` / `loop` / `facts` 这些载体块说话，每节先给一句 `lead` 大白话结论，段落只当补充。",
+		"**写给不看代码的人**：不贴代码、不写文件名/函数名/命令、不用术语；用 13 种载体块说话（flow / timeline / stats / bars / compare / callout / loop / facts / tree / branch / sequence / graph / state）—— 层级用 tree、岔路用 branch、多方往来用 sequence、依赖用 graph、状态用 state，每节先给一句 `lead` 大白话结论，段落只当补充。",
 		"然后 `flow_plan {action:\"advance\", to:\"done\"}` 收尾。",
 	].join("\n"),
 	done: "本次流程已结束。可以开始新的流程。",
@@ -91,7 +91,7 @@ function johariRules(): string {
 	].join("\n");
 }
 
-export function buildProtocol(state: FlowState): string {
+export function buildProtocol(state: FlowState, dispatch: string[] = []): string {
 	const label = PHASE_LABEL[state.phase];
 	const confirmed = state.intentConfirmed ? "已确认" : "**未确认**";
 	const approval = state.approval
@@ -119,7 +119,10 @@ export function buildProtocol(state: FlowState): string {
 		"- `flow_page` 生成 HTML 展示页（intent / decision / report）。生成后必须告诉用户「页面已打开，请确认」。",
 		"- `flow_ask` 向用户提一个决策问题（终端选择 + 可附 HTML 简报），会阻塞直到用户回答。",
 		"- `flow_plan` 推进/查看/终止流程。**不要**在没完成本阶段职责时推进。",
-		"- 派发 sub agent 用内置 `Agent` 工具；调研/评审阶段务必并行、只读。",
+		"- 派发 sub agent：" +
+			(dispatch.length
+				? `本环境可用：${dispatch.join(" / ")}。一个视角一个 agent，不要在一个 agent 里演两个角色。`
+				: "**本环境没有可用的派活工具**：调研与评审由你自己分饰多个视角，逐条给证据，并在页面与回复里标明「降级自查」。"),
 		"",
 		"### 阶段历史",
 		state.history.length

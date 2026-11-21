@@ -20,13 +20,14 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { type PageQuestion, type PageSection, type PageSpec, renderPage } from "./html.ts";
 import { checkSelfCheck, describeSelfCheckGap, selfCheckRules } from "./johari.ts";
 import { buildProtocol, phaseBadge } from "./protocol.ts";
 import {
 	EDGES,
 	type FlowState,
+	PHASES,
 	type Phase,
 	initialState,
 	isActive,
@@ -269,8 +270,14 @@ function persist(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	state.updatedAt = nowIso();
 	try {
 		pi.appendEntry(ENTRY_TYPE, state);
-	} catch {
-		/* appendEntry is best-effort; the in-memory state still drives this turn */
+	} catch (err) {
+		// Do not die silently: if the entry cannot be written, the next /resume would
+		// resurrect an older phase and look like the flow rewound on its own.
+		try {
+			ctx.ui.notify(`流程状态未能写入会话（下次恢复可能回退）：${err instanceof Error ? err.message : String(err)}`, "warning");
+		} catch {
+			/* no UI: keep going, the in-memory state still drives this turn */
+		}
 	}
 	try {
 		ctx.ui.setStatus(STATUS_KEY, phaseBadge(state));
@@ -290,6 +297,9 @@ function reconstruct(ctx: ExtensionContext): void {
 		? {
 				...initialState(),
 				...latest,
+				// A stale entry can carry a phase that no longer exists (renamed phase,
+				// hand-edited session): clamp it instead of rendering `undefined` forever.
+				phase: PHASES.includes(latest.phase) ? latest.phase : "idle",
 				// Copy the mutable arrays: appendEntry stores `data` by reference, so pushing
 				// into a shared array would rewrite the entry we just rebuilt from.
 				artifacts: [...(latest.artifacts ?? [])],
@@ -396,36 +406,132 @@ function plainSummary(spec: PageSpec): string {
 /** Shell tools can write files without ever calling write/edit. */
 const SHELL_TOOLS = new Set(["bash", "sh", "shell", "zsh", "powershell", "pwsh", "cmd"]);
 
-/** Sub-agent tool names differ per build (Agent / subagent / task …). */
-const SUBAGENT_RE = /^(agent|task|subagent|delegate|spawn|parallel)/;
+/** Sub-agent tool names differ per build (Agent / subagent / task …). Word boundary, not prefix. */
+const SUBAGENT_RE = /^(?:agent|subagent|task|delegate|spawn|parallel)(?:[_-]|$)/i;
 
-/** Shell one-liners that mutate the filesystem. */
+/** Shell one-liners that create or modify file content. */
 const SHELL_WRITE_RE =
-	/(^|[^0-9&])>\s*[^>\s]|\btee\b|\bSet-Content\b|\bAdd-Content\b|\bOut-File\b|\bNew-Item\b|\btouch\b|\bcp\b|\bmv\b|\bsed\s+-i\b|\bmkdir\b/i;
-
-/** Irreversible commands: blocked until the user approved a design (see isDestructive). */
+	/\btee\b|\bSet-Content\b|\bAdd-Content\b|\bOut-File\b|\bNew-Item\b|\btouch\b|\bsed\s+-i\b|\bperl\s+-[a-z]*i\b|\bgit\s+apply\b|\bcp\b|\bmv\b|\bmkdir\b/i;
 
 /** Read-only commands whose arguments may legitimately quote scary strings. */
-const INSPECT_RE = /^(rg|grep|egrep|ag|ack|fd|cat|type|Get-Content|less|head|tail|git\s+(log|show|diff|grep)|echo)\b/i;
+const INSPECT_RE =
+	/^(?:rg|grep|egrep|fgrep|ag|ack|fd|find|cat|type|Get-Content|less|more|head|tail|wc|sort|uniq|cut|jq|echo|printf|git\s+(?:log|show|diff|grep|status|branch|remote|rev-parse|ls-files))\b/i;
+
+/** Repo-mutating shell verbs: blocked until the design is approved. */
+const PRE_APPROVAL_MUTATION_RE =
+	/\b(?:sed\s+-i|perl\s+-[a-z]*i\s+-p|tee|Set-Content|Add-Content|Out-File|New-Item|git\s+(?:apply|checkout|restore|reset|commit|stash|merge|rebase|add|mv|rm)|npm\s+(?:install|i|add|uninstall|ci)|pnpm\s+(?:add|install|remove)|yarn\s+(?:add|install|remove)|pip\s+install|chmod\s|chown\s|mv\s|cp\s|truncate)/i;
+
+/** Note-like files stay writable before approval; real code does not. */
+const SCRATCH_EXT_RE = /\.(?:md|txt|log|json)$/i;
+
+/** Is this path the page/artifact area of the current workspace? */
+function inScratchDir(cwd: string, target: string): boolean {
+	if (!target) return false;
+	const abs = resolve(cwd, target);
+	const root = resolve(cwd, ".pi") + sep;
+	return abs.startsWith(root) || SCRATCH_EXT_RE.test(abs);
+}
 
 /** Strip quotes and collapse whitespace before matching command shape. */
 function normalizeCmd(cmd: string): string {
 	return cmd.replace(/["'`]/g, "").replace(/\s+/g, " ").trim();
 }
 
-/** Could this shell line destroy data or history? */
+/** Drop output-suppression noise that is never a mutation on its own. */
+function stripNoise(cmd: string): string {
+	return cmd
+		.replace(/\d?>>?\s*\/dev\/null/g, " ")
+		.replace(/&>\s*\/dev\/null/g, " ")
+		.replace(/\d?>&\d/g, " ");
+}
+
+/** Split a one-liner into independently executable segments (&&, ||, ;, |). */
+function cmdSegments(raw: string): string[] {
+	return stripNoise(normalizeCmd(raw))
+		.split(/&&|\|\||;|\|/)
+		.map((s) => s.trim())
+		.filter(Boolean);
+}
+
+/** Does this redirect target a real file (not /dev/null or a fd dup)? */
+function redirectsToFile(segment: string): boolean {
+	const m = segment.match(/(?<![0-9&])>>?\s*([^\s>|;&]+)/);
+	if (!m) return false;
+	const target = m[1];
+	if (target === "/dev/null" || /^&\d$/.test(target)) return false;
+	return /[/\\.]/.test(target);
+}
+
+/** Could this shell line destroy data or history? Evaluated per segment. */
 function isDestructive(raw: string): boolean {
-	const cmd = normalizeCmd(raw);
-	if (/\brm\s+-[a-z]*(r[a-z]*f|f[a-z]*r|r)\b/.test(cmd)) return true;
-	if (/\bfind\b[^|]*\s-delete\b/.test(cmd)) return true;
-	if (
-		/\bgit\b(?:\s+-\S+(?:\s+\S+)?)*\s+(push\s+(-f\b|--force)|reset\s+--hard|clean\s+-[a-z]*f|checkout\s+--\s)/.test(cmd)
-	)
-		return true;
-	if (/(^|[^0-9&])>\s*\S/.test(cmd) || /\bdd\s+if=|\btruncate\s+(--size|-s)\b|(^|\s):\s*>/.test(cmd)) return true;
-	if (/\b(drop\s+table|truncate\s+table)\b/i.test(cmd)) return true;
-	if (/\b(Remove-Item\b[^|]*-Recurse|shred\b|mkfs|format\s+[a-z]:)/i.test(cmd)) return true;
+	for (const seg of cmdSegments(raw)) {
+		const readOnly = INSPECT_RE.test(seg) && !redirectsToFile(seg);
+		if (readOnly) continue;
+		if (/\brm\s+(?:-[a-z-]*[rf]|--recursive|--force)/i.test(seg)) return true;
+		if (/\bfind\b[^|]*-delete\b/.test(seg)) return true;
+		if (redirectsToFile(seg)) return true;
+		if (/\.\s*\/\s*\S/.test(seg) || /^\s*\.\s+/.test(seg)) return true;
+		if (/\bdd\s+if=|\btruncate\s+(?:--size|-s)\b|(^|\s):\s*>/.test(seg)) return true;
+		if (
+			/\bgit\b[^|]*\s(?:push\s+(?:-f\b|--force)|reset\s+--hard|clean\s+-[a-z]*f|checkout\s+(?:--\s|\.)|restore\s+(?:--\s|\.)|stash\s+drop|reflog\s+expire|branch\s+-D)/.test(
+				seg,
+			)
+		)
+			return true;
+		if (/\b(?:drop\s+(?:table|database|schema)|truncate\s+table)\b/i.test(seg)) return true;
+		if (/\b(?:Remove-Item)\b[^|]*-Recurse|\bshred\b|\bmkfs|\bformat\s+[a-z]:/i.test(seg)) return true;
+		if (/\b(?:del|erase)\s+\/[sq]\b|\b(?:rd|rmdir)\s+\/s\b/i.test(seg)) return true;
+	}
 	return false;
+}
+
+/** Shell line that mutates the repo (content, deps, history). */
+function mutatesRepo(raw: string): boolean {
+	for (const seg of cmdSegments(raw)) {
+		if (PRE_APPROVAL_MUTATION_RE.test(seg)) return true;
+		if (redirectsToFile(seg)) return true;
+	}
+	return false;
+}
+
+/**
+ * Does this shell line create or change files, judged segment by segment?
+ * Read-only commands keep their right to quote scary-looking arguments.
+ */
+function shellMutates(raw: string): boolean {
+	for (const seg of cmdSegments(raw)) {
+		if (redirectsToFile(seg)) return true;
+		if (INSPECT_RE.test(seg)) continue;
+		if (SHELL_WRITE_RE.test(seg) || PRE_APPROVAL_MUTATION_RE.test(seg)) return true;
+	}
+	return mutatesRepo(raw);
+}
+
+/**
+ * Write a page under a collision-free name.
+ * `wx` makes the write atomic, so two tool calls in the same turn cannot overwrite
+ * each other; on EEXIST we take the next free number.
+ */
+async function writePage(dir: string, kind: string, html: string): Promise<string> {
+	try {
+		await mkdir(dir, { recursive: true });
+	} catch (err) {
+		throw new Error(`页面目录创建失败（${dir}）：${err instanceof Error ? err.message : String(err)}`);
+	}
+	let next = await nextPageSeq(dir);
+	for (let attempt = 0; attempt < 20; attempt += 1) {
+		const target = join(dir, `${String(next).padStart(2, "0")}-${kind}.html`);
+		try {
+			await writeFile(target, html, { encoding: "utf8", flag: "wx" });
+			return target;
+		} catch (err) {
+			if ((err as { code?: string }).code !== "EEXIST") {
+				throw new Error(`页面写入失败（${target}）：${err instanceof Error ? err.message : String(err)}`);
+			}
+			next += 1;
+		}
+	}
+	throw new Error(`页面写入失败：${dir} 下连续 20 次文件名冲突`);
 }
 
 /** Next free page number: the directory is the source of truth, not pageSeq. */
@@ -441,6 +547,19 @@ async function nextPageSeq(dir: string): Promise<number> {
 		return 1;
 	}
 }
+
+/** Names of dispatch tools this build actually exposes (none on a stock install). */
+function dispatchToolNames(pi: ExtensionAPI): string[] {
+	try {
+		const all = (pi as unknown as { getAllTools?: () => Array<{ name?: string }> }).getAllTools?.() ?? [];
+		return all.map((t) => String(t.name ?? "")).filter((n) => n && SUBAGENT_RE.test(n));
+	} catch {
+		return [];
+	}
+}
+
+/** Kept in step with package.json by hand: pages show it in the header chip. */
+const PKG_VERSION = "0.1.1";
 
 /* --------------------------------------------------------------------- init */
 
@@ -466,7 +585,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 	pi.on("before_agent_start", (event) => {
 		const sections = event.systemPromptOptions.sections as Record<string, string>;
 		if (isActive(state)) {
-			sections.johari_flow = buildProtocol(state);
+			sections.johari_flow = buildProtocol(state, dispatchToolNames(pi));
 		} else {
 			delete sections.johari_flow;
 		}
@@ -543,7 +662,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 
 		if (state.phase === "intent") {
 			const writesFile =
-				lower === "write" || lower === "edit" || (isShell && SHELL_WRITE_RE.test(cmd));
+				lower === "write" || lower === "edit" || (isShell && shellMutates(cmd));
 			if (writesFile) {
 				return {
 					block: true,
@@ -560,7 +679,25 @@ export default function johariFlow(pi: ExtensionAPI) {
 			}
 		}
 
-		if (isPreApproval(state) && isShell && !INSPECT_RE.test(cmd.trim()) && isDestructive(cmd)) {
+		// Before approval every phase is guarded: code changes must wait for the user's verdict.
+		if (isPreApproval(state) && state.phase !== "intent") {
+			const targetPath = String(input.path ?? input.file_path ?? input.filePath ?? "");
+			const editsProjectFile =
+				(lower === "write" || lower === "edit") && !inScratchDir(ctx.cwd, targetPath);
+			const shellWrites = isShell && shellMutates(cmd);
+			if (editsProjectFile || shellWrites) {
+				return {
+					block: true,
+					reason: [
+						`Johari Flow 处于 ${PHASE_CN[state.phase]} 阶段：方案未获用户批准前不改项目文件。`,
+						"允许的例外：.pi/ 下的页面与草稿、.md/.txt/.log 笔记、临时目录。",
+						"要把改动写进方案页（含回退方式），拿到用户回执后 approve，再动代码。",
+					].join(""),
+				};
+			}
+		}
+
+		if (isPreApproval(state) && isShell && isDestructive(cmd)) {
 			return {
 				block: true,
 				reason: `Johari Flow 处于 ${PHASE_CN[state.phase]} 阶段：方案未批准前禁止不可逆命令。把这条命令写进决策页，让用户拍板。`,
@@ -697,7 +834,11 @@ export default function johariFlow(pi: ExtensionAPI) {
 					if (!label) {
 						return reply("action=approve 需要 reason：把用户批准的是哪个方案、原话或选项 id 写进去。");
 					}
-					state.approval = { optionId: params.to ?? "user", label, at: nowIso() };
+					state.approval = {
+						optionId: String((params as Record<string, unknown>).optionId ?? "user"),
+						label,
+						at: nowIso(),
+					};
 					selfCheckNags = 0;
 					const fromApprove = state.phase;
 					state.phase = "approved";
@@ -825,11 +966,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 				);
 			}
 			const dir = resolve(ctx.cwd, ".pi", "flow", sessionSlug(ctx));
-			const seqNum = await nextPageSeq(dir);
-			state.pageSeq = seqNum;
-			const seq = String(seqNum).padStart(2, "0");
-			const fileName = `${seq}-${params.kind}.html`;
-			const absPath = join(dir, fileName);
 			const spec: PageSpec = {
 				kind: params.kind,
 				title: params.title,
@@ -849,9 +985,22 @@ export default function johariFlow(pi: ExtensionAPI) {
 				phase: PHASE_CN[state.phase],
 				cwd: ctx.cwd,
 				sessionId: sessionSlug(ctx),
+				project: basename(ctx.cwd),
+				version: PKG_VERSION,
 			});
-			await mkdir(dir, { recursive: true });
-			await writeFile(absPath, html, "utf8");
+			let absPath: string;
+			try {
+				absPath = await writePage(dir, params.kind, html);
+			} catch (err) {
+				return reply(
+					[
+						`页面没写成：${err instanceof Error ? err.message : String(err)}`,
+						"不要把页面当作已经给用户看过。先用聊天把结论讲清楚，或修好目录权限后重试。",
+					].join("\n"),
+				);
+			}
+			const fileName = absPath.split(/[\\/]/).pop() ?? "";
+			state.pageSeq = Number.parseInt(fileName, 10) || state.pageSeq;
 
 			const relPath = join(".pi", "flow", sessionSlug(ctx), fileName).replace(/\\/g, "/");
 			state.artifacts.push({
@@ -917,10 +1066,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 
 			if (params.page !== false) {
 				const dir = resolve(ctx.cwd, ".pi", "flow", sessionSlug(ctx));
-				const seqNum = await nextPageSeq(dir);
-				state.pageSeq = seqNum;
-				const seq = String(seqNum).padStart(2, "0");
-				const absPath = join(dir, `${seq}-decision.html`);
 				const spec: PageSpec = {
 					kind: "decision",
 					title: params.question,
@@ -937,19 +1082,36 @@ export default function johariFlow(pi: ExtensionAPI) {
 					johari: params.johari,
 					meta: { 阶段: PHASE_CN[state.phase] },
 				};
-				await mkdir(dir, { recursive: true });
-				await writeFile(
-					absPath,
-					renderPage(spec, { phase: PHASE_CN[state.phase], cwd: ctx.cwd, sessionId: sessionSlug(ctx) }),
-					"utf8",
-				);
-				state.artifacts.push({
-					kind: "decision",
-					title: params.question,
-					path: join(".pi", "flow", sessionSlug(ctx), `${seq}-decision.html`).replace(/\\/g, "/"),
-					at: nowIso(),
+				const html = renderPage(spec, {
+					phase: PHASE_CN[state.phase],
+					cwd: ctx.cwd,
+					sessionId: sessionSlug(ctx),
+					project: basename(ctx.cwd),
+					version: PKG_VERSION,
 				});
-				await openInBrowser(pi, absPath);
+				try {
+					const absPath = await writePage(dir, "decision", html);
+					const fileName = absPath.split(/[\\/]/).pop() ?? "";
+					state.pageSeq = Number.parseInt(fileName, 10) || state.pageSeq;
+					state.artifacts.push({
+						kind: "decision",
+						title: params.question,
+						path: join(".pi", "flow", sessionSlug(ctx), fileName).replace(/\\/g, "/"),
+						at: nowIso(),
+					});
+					// A batch run (-p / json) has nobody looking at a browser tab: skip it.
+					if (ctx.hasUI) await openInBrowser(pi, absPath);
+				} catch (err) {
+					// The question matters more than the page: report the failure, then ask anyway.
+					try {
+						ctx.ui.notify(
+							`决策页没写成（不影响继续提问）：${err instanceof Error ? err.message : String(err)}`,
+							"warning",
+						);
+					} catch {
+						/* no UI */
+					}
+				}
 			}
 
 			let answer: string | undefined;

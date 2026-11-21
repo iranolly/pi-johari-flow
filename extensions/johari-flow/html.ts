@@ -146,6 +146,17 @@ export interface PageSpec {
 
 /* ------------------------------------------------------------------ markdown */
 
+/** CSS is model-authored: strip anything that could close the style element or fetch remote code. */
+function sanitizeCss(src: string): string {
+	return String(src)
+		.replace(/<\/?\s*(?:style|script|link|iframe)[^>]*>/gi, "")
+		.replace(/<!--|-->/g, "")
+		.replace(/@import[^;]*;?/gi, "")
+		.replace(/javascript\s*:/gi, "")
+		.replace(/expression\s*\(/gi, "(")
+		.replace(/url\s*\(\s*['"]?\s*(?:javascript|data):/gi, "url(");
+}
+
 function esc(s: string): string {
 	return s
 		.replace(/&/g, "&amp;")
@@ -434,26 +445,21 @@ tr:last-child td{border-bottom:0}
 .blk:last-child{margin-bottom:0}
 
 /* chain of steps */
-.flowline{display:flex;flex-wrap:wrap;gap:0;align-items:stretch}
+.flowline{display:grid;gap:12px;grid-template-columns:repeat(var(--cols,6),minmax(0,1fr))}
 .step{
-  flex:1 1 150px;min-width:150px;position:relative;background:var(--panel);border:1px solid var(--line);
-  border-radius:9px;padding:14px 15px 13px;margin-right:26px
+  position:relative;background:var(--panel);border:1px solid var(--line);
+  border-radius:9px;padding:13px 14px 12px;border-top:2px solid var(--line-2)
 }
-.step:last-child{margin-right:0}
-.step::after{
-  content:"";position:absolute;top:50%;right:-20px;width:14px;height:1px;background:var(--line-2)
-}
-.step:last-child::after{display:none}
 .step .sn{
-  font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--fg-mute);display:block;margin-bottom:7px
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--fg-dim);display:block;margin-bottom:7px
 }
-.step .st{font-size:14.5px;font-weight:600;line-height:1.4}
-.step .so{font-size:12.5px;color:var(--fg-dim);margin-top:6px;line-height:1.5}
-.step.done{border-color:color-mix(in oklab,var(--open) 45%,var(--line));background:color-mix(in oklab,var(--open) 7%,var(--panel))}
+.step .st{font-size:15px;font-weight:600;line-height:1.42}
+.step .so{font-size:13px;color:var(--fg-dim);margin-top:6px;line-height:1.55}
+.step.done{border-color:color-mix(in oklab,var(--open) 45%,var(--line));border-top-color:var(--open);background:color-mix(in oklab,var(--open) 7%,var(--panel))}
 .step.done .sn{color:var(--open)}
-.step.now{border-color:var(--accent-dim);background:color-mix(in oklab,var(--accent) 9%,var(--panel));box-shadow:0 0 0 1px color-mix(in oklab,var(--accent) 22%,transparent)}
+.step.now{border-color:var(--accent-dim);border-top-color:var(--accent);background:color-mix(in oklab,var(--accent) 9%,var(--panel));box-shadow:0 0 0 1px color-mix(in oklab,var(--accent) 22%,transparent)}
 .step.now .sn{color:var(--accent)}
-.step.next{opacity:.72}
+.step.next{opacity:.88}
 
 /* vertical timeline */
 .tl{position:relative;padding-left:26px}
@@ -560,13 +566,14 @@ details.td:not([open])>summary .tnode::after{content:"▸"}
 
 /* branch — decision trace */
 .branch{font-size:14px}
-.brow{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.bnode{display:inline-block;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:6px 12px;font-weight:600}
-.bnode.root{border-color:var(--accent-dim);background:color-mix(in oklab,var(--accent) 8%,var(--panel))}
-.branch .bnote{display:inline;margin:0;font-size:12.5px;color:var(--fg-mute);font-weight:400}
-.bchild{position:relative;padding-left:26px;margin-top:9px;border-left:1px solid color-mix(in oklab,var(--fg-mute) 45%,transparent)}
-.bchild::before{content:"";position:absolute;left:0;top:16px;width:18px;height:1px;background:color-mix(in oklab,var(--fg-mute) 45%,transparent)}
-.bcond{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--accent);border:1px dashed var(--accent-dim);border-radius:99px;padding:2px 9px;margin:0}
+.brow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.bnode{display:inline-block;background:var(--panel-2);border:1px solid var(--line-2);border-radius:7px;padding:7px 13px;font-weight:600;color:var(--fg);font-size:14.5px}
+.bnode.root{border-color:var(--accent-dim);background:color-mix(in oklab,var(--accent) 10%,var(--panel));padding:8px 14px}
+.branch .bnote{display:inline;margin:0;font-size:13px;color:var(--fg-dim);font-weight:400}
+.bchild{position:relative;padding:9px 0 9px 22px;border-left:2px solid color-mix(in oklab,var(--line-2) 90%,transparent)}
+.bchild:first-of-type{margin-top:6px}
+.bchild::before{content:"";position:absolute;left:0;top:25px;width:16px;height:2px;background:color-mix(in oklab,var(--line-2) 90%,transparent)}
+.bcond{display:inline-block;font-size:12px;letter-spacing:0;color:#f3d9ae;background:color-mix(in oklab,var(--accent) 16%,var(--panel));border:1px solid color-mix(in oklab,var(--accent) 40%,var(--line));border-radius:6px;padding:3px 9px;margin:0;font-weight:500}
 
 /* svg figures: sequence / graph / state */
 .fig{overflow:auto;border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:10px 12px}
@@ -599,8 +606,7 @@ details.td:not([open])>summary .tnode::after{content:"▸"}
 
 @media (max-width:720px){
   .cmp{grid-template-columns:1fr}
-  .step{margin-right:0;margin-bottom:10px;flex:1 1 100%}
-  .step::after{display:none}
+  .flowline{grid-template-columns:repeat(min(var(--cols,6),2),minmax(0,1fr))}
 }
 @media (prefers-reduced-motion:reduce){
   .stat,.barfill,.loopback .arc{animation:none}
@@ -985,7 +991,8 @@ function renderBlock(b: Block): string {
 </div>`;
 				})
 				.join("");
-			return `<div class="blk flowline">${steps}</div>`;
+			const cols = Math.min(Math.max(b.steps?.length ?? 1, 1), 6);
+			return `<div class="blk flowline" style="--cols:${cols}">${steps}</div>`;
 		}
 		case "timeline": {
 			const items = (b.events ?? [])
@@ -1022,14 +1029,15 @@ function renderBlock(b: Block): string {
 			return `<div class="blk barlist">${rows}</div>${b.caption ? `<div class="blk"><div class="bnote">${inline(b.caption)}</div></div>` : ""}`;
 		}
 		case "compare": {
-			const col = (side: { title: string; items: string[] }, cls: string) =>
-				`<div class="cmpcol ${cls}"><h4>${esc(side.title)}</h4><ul>${(side.items ?? [])
-					.map((i) => `<li>${inline(i)}</li>`)
-					.join("")}</ul></div>`;
-			return `<div class="blk cmp">${col(b.left, "left")}${col(b.right, "right")}</div>`;
+			const side = (s: { title?: string; items?: string[] } | undefined, cls: string) => {
+				if (!s) return "";
+				const items = (s.items ?? []).map((i) => `<li>${inline(i)}</li>`).join("");
+				return `<div class="cmpcol ${cls}"><h4>${esc(s.title ?? "")}</h4><ul>${items}</ul></div>`;
+			};
+			return `<div class="blk cmp">${side(b.left, "left")}${side(b.right, "right")}</div>`;
 		}
 		case "callout":
-			return `<div class="blk callout ${b.tone ?? "info"}">${b.title ? `<div class="ct">${inline(b.title)}</div>` : ""}<div class="cx">${inline(b.text)}</div></div>`;
+			return `<div class="blk callout ${b.tone ?? "info"}">${b.title ? `<div class="ct">${inline(b.title)}</div>` : ""}<div class="cx">${inline(b.text ?? "")}</div></div>`;
 		case "loop": {
 			const pills = (b.steps ?? [])
 				.map((s, i) => `<div class="looppill"><span class="ln">${i + 1}</span>${inline(s.title)}</div>`)
@@ -1053,7 +1061,8 @@ function renderBlock(b: Block): string {
 		case "state":
 			return renderState(b.states ?? [], b.transitions ?? []);
 		default:
-			return "";
+			// A misspelled kind must be visible, never a silently blank page.
+			return `<div class="blk callout warn"><div class="ct">未知的展示块</div><div class="cx">kind = ${esc(String((b as { kind?: string }).kind ?? "(空)"))}。可用：flow / timeline / stats / bars / compare / callout / loop / facts / tree / branch / sequence / graph / state。</div></div>`;
 	}
 }
 
@@ -1062,7 +1071,10 @@ function renderBlocks(blocks?: Block[]): string {
 	return blocks.map(renderBlock).filter(Boolean).join("\n");
 }
 
-export function renderPage(spec: PageSpec, meta: { phase: string; cwd: string; sessionId: string }): string {
+export function renderPage(
+	spec: PageSpec,
+	meta: { phase: string; cwd: string; sessionId: string; project?: string; version?: string },
+): string {
 	const sections = spec.sections
 		.map((s, idx) => {
 			const tone = s.tone && s.tone !== "plain" ? ` tone-${s.tone}` : "";
@@ -1097,15 +1109,15 @@ export function renderPage(spec: PageSpec, meta: { phase: string; cwd: string; s
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(spec.title)} · Johari Flow</title>
-<style>${CSS}</style>${spec.css ? `<style>/* page-level override */\n${spec.css}</style>` : ""}
+<style>${CSS}</style>${spec.css ? `<style>/* page-level override */\n${sanitizeCss(spec.css)}</style>` : ""}
 </head>
 <body>
 <div class="topbar"><div class="inner">
   <span class="brand">PI <b>/</b> JOHARI FLOW</span>
   <span class="chip kind">${esc(KIND_LABEL[spec.kind])}</span>
-  <span class="chip">阶段 ${esc(meta.phase)}</span>
+  <span class="chip">阶段 ${esc(meta.phase)}</span>${meta.project ? `<span class="chip">${esc(meta.project)}</span>` : ""}${meta.version ? `<span class="chip">v${esc(meta.version)}</span>` : ""}
   <span class="spacer"></span>
-  <span class="meta">${esc(new Date().toLocaleString("zh-CN", { hour12: false }))}</span>
+  <span class="meta">会话 ${esc(meta.sessionId)} ｜ ${esc(new Date().toLocaleString("zh-CN", { hour12: false }))}</span>
 </div></div>
 
 <div class="wrap">
@@ -1193,7 +1205,7 @@ export function renderPage(spec: PageSpec, meta: { phase: string; cwd: string; s
         btn.classList.remove('on');
       } else {
         chosen[q] = { id: a, label: btn.getAttribute('data-label') };
-        document.querySelectorAll('.choice[data-q="' + q + '"]').forEach(function(b){ b.classList.remove('on'); });
+        document.querySelectorAll('[data-q]').forEach(function(b){ if (b.getAttribute('data-q') === q) b.classList.remove('on'); });
         btn.classList.add('on');
       }
       refreshReceipt();
@@ -1207,10 +1219,10 @@ export function renderPage(spec: PageSpec, meta: { phase: string; cwd: string; s
     copy(document.querySelector('.wrap').innerText);
   });
   document.getElementById('copyPath').addEventListener('click', function(){
-    copy(location.href.replace(/^file:\\/\\//, ''));
-  });
-  document.addEventListener('keydown', function(e){
-    if (e.key === 'Escape') return;
+    var p = location.pathname;
+    try { p = decodeURIComponent(p); } catch (err) { /* keep raw */ }
+    if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);
+    copy(p);
   });
 })();
 </script>

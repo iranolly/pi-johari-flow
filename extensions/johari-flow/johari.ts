@@ -28,7 +28,7 @@ import type { Phase } from "./types.ts";
 export const SELF_CHECK_TITLE = "乔哈里自检";
 
 /** Non-space characters a dimension needs after its label to count as written. */
-const MIN_DIM_CHARS = 6;
+const MIN_DIM_CHARS = 4;
 
 export interface SelfCheckDimension {
 	/** Label that must appear in the self-check block. */
@@ -170,7 +170,7 @@ export function selfCheckRules(): string {
 		"这不是选项，也不是分数。它是你在把回复交给用户之前，对自己的输出做一次审查：",
 		dims,
 		"",
-		"格式（八项都要，写「无」时必须说清为什么无）：",
+		"格式（八项都要，写「无」时必须说清为什么无）。**默认写紧凑版**：八项挤在同一个引用块里，每项一句、整段不超过 6 行 —— 用户要看的是内容，不是排版：",
 		"",
 		"```",
 		selfCheckTemplate(),
