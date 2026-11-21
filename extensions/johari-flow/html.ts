@@ -534,14 +534,14 @@ tr:last-child td{border-bottom:0}
 .looppill::before{content:"⟶";color:var(--fg-mute);margin-right:2px;font-size:12px}
 .looppill:first-child::before{display:none}
 .loopback{
-  margin-top:12px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--accent);
-  display:flex;align-items:center;gap:9px
+  margin-top:14px;display:grid;grid-template-columns:minmax(240px,1fr) auto;gap:14px;align-items:end;
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--accent)
 }
-.loopback .arc{
-  flex:0 0 44px;height:16px;border:1px dashed var(--accent-dim);border-bottom:0;
-  border-radius:14px 14px 0 0;position:relative;animation:spin 6.5s linear infinite;transform-origin:50% 100%
-}
-@keyframes spin{to{transform:rotate(360deg)}}
+.loopback svg{display:block;width:100%;height:36px;overflow:visible;color:var(--accent-dim)}
+.loopback svg .dash{stroke:currentColor;stroke-width:1.4;fill:none;stroke-dasharray:5 4;stroke-linecap:round}
+.loopback svg .head{fill:currentColor;stroke:none}
+.loopback span{align-self:center;line-height:1.5}
+@media (max-width:720px){.loopback{grid-template-columns:1fr}}
 
 /* facts */
 .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
@@ -609,7 +609,7 @@ details.td:not([open])>summary .tnode::after{content:"▸"}
   .flowline{grid-template-columns:repeat(min(var(--cols,6),2),minmax(0,1fr))}
 }
 @media (prefers-reduced-motion:reduce){
-  .stat,.barfill,.loopback .arc{animation:none}
+  .stat,.barfill{animation:none}
 }
 
 footer{
@@ -1042,7 +1042,12 @@ function renderBlock(b: Block): string {
 			const pills = (b.steps ?? [])
 				.map((s, i) => `<div class="looppill"><span class="ln">${i + 1}</span>${inline(s.title)}</div>`)
 				.join("");
-			return `<div class="blk"><div class="loopline">${pills}</div><div class="loopback"><span class="arc"></span>走完最后一个就回到第 1 步，如此往复直到不再缺东西</div></div>`;
+			// A static U-turn arrow: a spinning half-arch read as a loading spinner.
+			const arc = `<svg viewBox="0 0 300 36" preserveAspectRatio="none" aria-hidden="true">
+  <path class="dash" d="M288 4 V18 A12 12 0 0 1 276 30 H24 A12 12 0 0 1 12 18 V12"></path>
+  <path class="head" d="M12 2 L5 14 H19 Z"></path>
+</svg>`;
+			return `<div class="blk"><div class="loopline">${pills}</div><div class="loopback">${arc}<span>走完最后一个就回到第 1 步，如此往复直到不再缺东西</span></div></div>`;
 		}
 		case "facts": {
 			const cells = (b.facts ?? [])
