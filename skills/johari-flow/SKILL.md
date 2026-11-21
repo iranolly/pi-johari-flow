@@ -19,9 +19,9 @@ description: Use when the user wants a task handled under the Johari-window deli
 2. **没有 HTML 页面，就没有确认。** 口头说「我理解你的需求了」不算，必须 `flow_page kind="intent"`。
 3. **每个用户可见的最终回复都落在开放区。** 结论 + 依据 + 未验证/风险 + 需要用户决定的事，四段齐全。**回复末尾必须由你自己写「乔哈里自检」八项**（见 §3）；扩展只校验不缺项、不替你写，缺了会提醒你补。
 4. **决策属于用户，不属于你。** 范围变更、不可逆操作、方案前提崩塌、同一处连续两次修不好 —— 一律 `flow_ask`。
-5. **批准前一律只读。** ② 调研 / ③ 设计 / ④ 评审 三个阶段里，`write`/`edit` 改项目文件、`sed -i`、`git apply`、`npm install`、`git commit` 都会被 `tool_call` hook 拦掉（`.md`/`.txt`/`.log`/`.json` 笔记与 `.pi/` 下的页面仍可写）；要动手就是 `execute` 阶段了。
+5. **批准前一律只读。** ② 调研 / ③ 设计 / ④ 评审 三个阶段里，`write`/`edit` 改项目文件、`sed -i`、`git apply`、`npm install`、`git commit` 都会被 `tool_call` hook 拦掉；唯一例外是 `<cwd>/.pi/` 下的页面与草稿（含 shell 重定向进去）。要动手就是 `execute` 阶段了。
 6. **没有派活工具就降级。** 若本环境不提供 `Agent`/`subagent`/`task` 之类工具，不要假装派了活：自己分饰多个视角逐项查证，并在页面与回复里写明「降级自查」。
-6. **收尾必须有报告页。** 没有 `flow_page kind="report"`，`advance to="done"` 会被拒。
+7. **收尾必须有报告页。** 没有 `flow_page kind="report"`，`advance to="done"` 会被拒；报告页只能在 `execute` / `report` 阶段出。
 
 ---
 
@@ -39,9 +39,12 @@ idle → intent → research → design → review → approved → execute → 
 | `research` | 把未知变成事实 | design | 每个待答问题都有证据或标为未知 |
 | `design` | 给出 ≥2 个可选方案 | review | 每方案含影响面/成本/可回滚性 |
 | `review` | 交叉评审打掉自欺 | approved | ≥2 个不同视角的 reviewer 结论 + 「必须改」已落地 + `flow_plan {action:"approve", reason:"<用户原话>"}` |
-| `approved` | 已拍板，准备动手 | execute | `advance to="execute"`（approved 没有别的出口） |
+| `approved` | 已拍板，准备动手 | execute | `advance to="execute"`（主路径；发现新事实可退回 review/design） |
 | `execute` | 监督执行 + 决策大循环 | report | 每步有验证证据 |
 | `report` | 说清做了什么、没做什么 | done | 报告页已生成 |
+| `done` | 结束 | idle | `advance to="idle"` 才能开新流程；也可直接 `flow_plan {action:"start"}` |
+
+回退都不丢历史：`setGoal` 会回到 `intent` 并作废旧的意图确认；已批准后 `setGoal` 会被拒，须先 `advance to="design"`。
 
 回退是正常的：发现新事实就 `advance` 回 `research` 或 `design`，别硬着头皮往前推。
 
@@ -167,7 +170,7 @@ idle → intent → research → design → review → approved → execute → 
 - 下一步：<等你拍板的具体一件事>
 ```
 
-校验规则：八项每项标签后要有**实际内容**（至少几个字），只写「无」不算；整段少于 40 个非空白字符算「过短，像套话」。
+校验规则：八项每项标签后至少 4 个非空白字符，只写「无」判缺项；八项齐全但整段极短时只提示「像套话」，不拦流程。标签必须原文照写（证据/用词/框架/假设/未知/隐藏/一致性/下一步），换个说法就算缺失。
 
 ---
 
@@ -220,7 +223,7 @@ idle → intent → research → design → review → approved → execute → 
 
 - `options[].id` 用短 id（`A`/`B`/`confirm`/`revise`）。选项行点击即复制回执，用户粘回 Pi 你就收到决策了。
 - **只有一个决策时才用 `options`**；有 N 个互不绑定的决策点，就用 `questions`：每题 `{id, prompt, hint?, choices[]}`，页面渲染成 N 组独立单选 + 页尾回执（`Q1=A（…）；Q2=B（…）`）。把多个决策打包成一个选项列表是错的 —— 用户只能整包接受。
-- 每个 choice 的 `detail` 写「选它具体意味着什么」，`cost` 一行写代价/风险；推荐项加 `recommended: true`。
+- 每个 choice 的 `detail` 写「选它具体意味着什么」；推荐项加 `recommended: true`。`cost` 只存在于 `options[]`（单决策用），`questions[].choices[]` 只有 `id`/`label`/`detail`/`recommended`，写 `cost` 会被忽略。
 
 ### 4.4 产物位置
 

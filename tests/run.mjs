@@ -7,7 +7,7 @@
  * already ships with, then everything below drives the extension through the
  * same hooks pi does (fake `pi`, fake `ctx`, fake `sessionManager`).
  */
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureHostModules } from "./host.mjs";
@@ -42,7 +42,8 @@ function harness() {
 			tools["/" + name] = def;
 		},
 		appendEntry(type, data) {
-			entries.push({ type: "custom", customType: type, data });
+			// Snapshot like the real host does: a live reference would hide aliasing bugs.
+			entries.push({ type: "custom", customType: type, data: data === undefined ? undefined : JSON.parse(JSON.stringify(data)) });
 		},
 		async exec(cmd, args) {
 			exec.push([cmd, args]);
@@ -146,7 +147,9 @@ const firstLine = (s) => String(s).split("\n")[0];
 
 	const cases = [
 		["B1 project write blocked", { toolName: "write", input: { path: join(WORK, "src/b.ts") } }, true],
-		["B2 note write allowed", { toolName: "write", input: { path: join(WORK, "notes/research.md") } }, false],
+		["B2 note under .pi allowed", { toolName: "write", input: { path: join(WORK, ".pi/notes/research.md") } }, false],
+		["B2b note outside .pi blocked", { toolName: "write", input: { path: join(WORK, "notes/research.md") } }, true],
+		["B2c package.json blocked", { toolName: "write", input: { path: join(WORK, "package.json") } }, true],
 		["B3 page write allowed", { toolName: "write", input: { path: join(WORK, ".pi/flow/x/01-intent.html") } }, false],
 		["B4 sed -i blocked", { toolName: "bash", input: { command: "sed -i 's/a/b/' src/a.ts" } }, true],
 		["B5 chained rm blocked", { toolName: "bash", input: { command: "rg foo && rm -rf src" } }, true],
@@ -159,6 +162,18 @@ const firstLine = (s) => String(s).split("\n")[0];
 		["B12 rm -Rf blocked", { toolName: "bash", input: { command: "rm -Rf build" } }, true],
 		["B13 git restore . blocked", { toolName: "bash", input: { command: "git restore ." } }, true],
 		["B14 drop database blocked", { toolName: "bash", input: { command: "mysql -e 'drop database prod'" } }, true],
+		["B15 find -delete blocked", { toolName: "bash", input: { command: "find . -name '*.ts' -delete" } }, true],
+		["B16 branch -D blocked", { toolName: "bash", input: { command: "git branch -D main" } }, true],
+		["B17 force refspec push blocked", { toolName: "bash", input: { command: "git push origin +main" } }, true],
+		["B18 git -C commit blocked", { toolName: "bash", input: { command: "git -C repo commit -am wip" } }, true],
+		["B19 npm --prefix install blocked", { toolName: "bash", input: { command: "npm --prefix . install lodash" } }, true],
+		["B20 redirect without extension blocked", { toolName: "bash", input: { command: "echo hi > out" } }, true],
+		["B21 command substitution blocked", { toolName: "bash", input: { command: "cat $(rm -rf src)" } }, true],
+		["B22 multi-line command blocked", { toolName: "bash", input: { command: "cat README.md\nrm -rf src" } }, true],
+		["B23 quoted shell payload blocked", { toolName: "bash", input: { command: 'bash -c "echo hi > src/x.ts"' } }, true],
+		["B24 stash list allowed", { toolName: "bash", input: { command: "git stash list" } }, false],
+		["B25 awk float compare allowed", { toolName: "bash", input: { command: "awk '$3 > 1.5' data.txt" } }, false],
+		["B26 scratch redirect allowed", { toolName: "bash", input: { command: "echo hi > .pi/flow/note.md" } }, false],
 	];
 	for (const [id, event, shouldBlock] of cases) {
 		const out = await h.fire("tool_call", event);
@@ -202,15 +217,25 @@ const firstLine = (s) => String(s).split("\n")[0];
 	await h.plan({ action: "approve", reason: "用户批准" });
 	await h.plan({ action: "advance", to: "execute" });
 
-	// two pages requested in the same turn must not overwrite each other
-	await Promise.all([
-		h.page({ kind: "report", title: "并排一", sections: [], open: false }),
-		h.page({ kind: "report", title: "并排二", sections: [], open: false }),
-	]);
-	const dir = readdirSync(join(WORK, ".pi/flow")).flatMap((s) =>
-		readdirSync(join(WORK, ".pi/flow", s)).filter((f) => f.endsWith("-report.html")),
+	// a page must exist before the flow can claim it is finished
+	const toReport = h.text(await h.plan({ action: "advance", to: "report" }));
+	check("D0 report phase reached", toReport.includes("已推进"), toReport.slice(0, 60));
+	const early = h.text(await h.plan({ action: "advance", to: "done" }));
+	check("D0b done needs a report first", early.includes("报告") && !early.includes("已推进"), early.slice(0, 60));
+
+	// many pages requested in the same turn must each land in their own file
+	const countReports = () =>
+		readdirSync(join(WORK, ".pi/flow")).flatMap((s) =>
+			readdirSync(join(WORK, ".pi/flow", s)).filter((f) => f.endsWith("-report.html")),
+		).length;
+	const before = countReports();
+	await Promise.all(
+		Array.from({ length: 12 }, (_, i) =>
+			h.page({ kind: "report", title: `并排${i}`, sections: [], open: false }),
+		),
 	);
-	check("D1 concurrent pages keep both files", new Set(dir).size >= 2, dir.join(","));
+	const grown = countReports() - before;
+	check("D1 concurrent pages never overwrite", grown === 12, "grew by " + grown);
 
 	const unknown = await h.page({
 		kind: "report",
@@ -218,8 +243,15 @@ const firstLine = (s) => String(s).split("\n")[0];
 		sections: [{ heading: "h", blocks: [{ kind: "sparkline", items: [] }] }],
 		open: false,
 	});
-	const lastPage = name(readdirSync(join(WORK, ".pi/flow")));
 	check("D2 unknown block is visible", h.text(unknown).includes("已生成"));
+	const unknownPage = readdirSync(join(WORK, ".pi/flow"))
+		.flatMap((s) => readdirSync(join(WORK, ".pi/flow", s)).map((f) => join(WORK, ".pi/flow", s, f)))
+		.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+	const unknownHtml = readFileSync(unknownPage, "utf8");
+	check(
+		"D2b unknown block warns on the page",
+		unknownHtml.includes("未知的展示块") && unknownHtml.includes("sparkline"),
+	);
 
 	// css override is model-authored: it must never close the style element
 	const html = renderPage(
@@ -234,7 +266,10 @@ const firstLine = (s) => String(s).split("\n")[0];
 	const styleCloses = (html.match(/<\/style>/g) ?? []).length;
 	check("D3 css cannot break out", styleCloses === 2 && !html.includes("<script>alert(1)"), `${styleCloses} closers`);
 
-	const copyPath = /decodeURIComponent\(p\)/.test(html) && !/location\.href\.replace/.test(html);
+	const copyPath =
+		/decodeURIComponent\(p\)/.test(html) &&
+		/\^\\\/\[A-Za-z\]:/.test(html) &&
+		!/location\.href\.replace/.test(html);
 	check("D4 copy-path gives a usable path", copyPath);
 
 	// every page must ship script that parses: one stray escape and every button dies
@@ -247,7 +282,7 @@ const firstLine = (s) => String(s).split("\n")[0];
 	}
 	check("D6 page script parses", parses && scriptSrc.length > 100);
 
-	check("D5 done needs the report", h.text(await h.plan({ action: "advance", to: "report" })).includes("已推进"));
+	check("D7 done after the report", h.text(await h.plan({ action: "advance", to: "done" })).includes("已推进"));
 }
 
 function name(list) {
@@ -322,7 +357,8 @@ function notes2(list) {
 		],
 	});
 	const payload = asked?.details ?? asked?.content?.[0]?.text ?? "";
-	check("F1 ask without UI answers false", JSON.stringify(payload).includes("answered") && h.notes.length >= 0);
+	check("F1 ask without UI answers false", payload.answered === false);
+	check("F1b ask explains itself without UI", h.text(asked).includes("没有交互 UI"));
 
 	check("F2 setGoal before approval", h.text(await h.plan({ action: "setGoal", goal: "新意图" })).includes("重新确认"));
 	await h.plan({ action: "confirm", reason: "用户确认" });
@@ -331,6 +367,111 @@ function notes2(list) {
 	const sp = { systemPromptOptions: { sections: {} } };
 	await h.fire("before_agent_start", sp);
 	check("F4 protocol gone after abort", (sp.systemPromptOptions.sections.johari_flow ?? "").trim() === "");
+}
+
+/* --------------------------------------- G. gate matrix, phase by phase */
+{
+	const shouldBlock = [
+		"rm -rf src",
+		"rm --recursive --force src",
+		"rm -Rf src",
+		"rg foo && rm -rf src",
+		"sed -i.bak 's/a/b/' src/x.ts",
+		"perl -pi -e 's/a/b/' x.ts",
+		"git checkout .",
+		"git restore .",
+		"git reset --hard HEAD~1",
+		"git apply p.patch",
+		"git commit -am wip",
+		"npm install lodash",
+		'bash -c "echo hi > src/x.ts"',
+		"echo hi | tee x.ts",
+		"cp a.ts src/b.ts",
+		"mv a.ts src/b.ts",
+		"truncate -s 0 src/x.ts",
+		"git push --force origin main",
+		"git -C repo push -f",
+		'shred f',
+	];
+	const shouldAllow = [
+		'rg "rm -rf" docs',
+		"git status",
+		"git log --oneline -5",
+		"cat README.md",
+		"awk '$3 > 100' data.txt",
+		"git status > /dev/null 2>&1",
+		'find . -name "*.ts" | head',
+		"ls -la",
+		"wc -l x.ts",
+		'node -e "console.log(1)"',
+		"git diff",
+		"echo hi",
+	];
+	for (const phase of ["intent", "research", "review"]) {
+		const h = harness();
+		await h.fire("session_start", { reason: "startup" });
+		await h.plan({ action: "start", goal: "矩阵" });
+		if (phase !== "intent") {
+			await h.plan({ action: "confirm", reason: "用户确认" });
+			await h.plan({ action: "advance", to: "research" });
+			if (phase === "review") {
+				await h.plan({ action: "advance", to: "design" });
+				await h.plan({ action: "advance", to: "review" });
+			}
+		}
+		const leaks = [];
+		for (const command of shouldBlock) {
+			const r = await h.fire("tool_call", { toolName: "bash", input: { command } });
+			if (!h.blocked(r[0])) leaks.push(command);
+		}
+		const noise = [];
+		for (const command of shouldAllow) {
+			const r = await h.fire("tool_call", { toolName: "bash", input: { command } });
+			if (h.blocked(r[0])) noise.push(command);
+		}
+		check(`G1 ${phase}: mutations blocked`, leaks.length === 0, leaks.join(" | "));
+		check(`G2 ${phase}: read-only allowed`, noise.length === 0, noise.join(" | "));
+	}
+	// interpreter one-liners that name a write API are mutations, not inspection
+	const h = harness();
+	await h.fire("session_start", { reason: "startup" });
+	await h.plan({ action: "start", goal: "内联脚本" });
+	const inline = await h.fire("tool_call", {
+		toolName: "bash",
+		input: { command: `node -e "require('fs').writeFileSync('src/x.ts','')"` },
+	});
+	check("G3 inline write blocked", h.blocked(inline[0]));
+	const py = await h.fire("tool_call", {
+		toolName: "bash",
+		input: { command: `python -c "open('src/x.ts','w').write(1)"` },
+	});
+	check("G4 python inline write blocked", h.blocked(py[0]));
+	const note = await h.fire("tool_call", {
+		toolName: "write",
+		input: { path: join(WORK, ".pi", "flow", "note.md"), content: "草稿" },
+	});
+	check("G5 scratch note writable in intent", !h.blocked(note[0]));
+	const code = await h.fire("tool_call", {
+		toolName: "write",
+		input: { path: join(WORK, "src", "a.ts"), content: "x" },
+	});
+	check("G6 project file blocked in intent", h.blocked(code[0]));
+}
+
+/* ------------------------------------------------------------ H. release hygiene */
+{
+	// the version is written twice (package.json + the footer constant); prove they agree
+	const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+	const src = readFileSync(join(repoRoot, "extensions/johari-flow/index.ts"), "utf8");
+	const constant = (src.match(/const PKG_VERSION = "([^"]+)"/) ?? [null, null])[1];
+	check("H1 PKG_VERSION matches package.json", constant === pkg.version, `${constant} vs ${pkg.version}`);
+
+	const skill = readFileSync(join(repoRoot, "skills/johari-flow/SKILL.md"), "utf8");
+	check("H2 skill has frontmatter", /^---\r?\nname: johari-flow\r?\n/.test(skill));
+	check("H3 skill lists every carrier", ["tree", "branch", "sequence", "graph", "state"].every((k) => skill.includes(k)));
+
+	const changelog = readFileSync(join(repoRoot, "CHANGELOG.md"), "utf8");
+	check("H4 changelog has this version", changelog.includes(`## [${pkg.version}]`));
 }
 
 /* ------------------------------------------------------------------ summary */

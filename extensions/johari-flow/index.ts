@@ -20,6 +20,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { type PageQuestion, type PageSection, type PageSpec, renderPage } from "./html.ts";
 import { checkSelfCheck, describeSelfCheckGap, selfCheckRules } from "./johari.ts";
@@ -261,6 +262,8 @@ const JohariSchema = Type.Object({
 let state: FlowState = initialState();
 /** Follow-up nudges per self-check miss; capped so a stubborn turn cannot loop. */
 let selfCheckNags = 0;
+/** Self-check verdict waiting for the turn to finish before it is written down. */
+let pendingSelfCheck: Record<string, unknown> | null = null;
 
 function nowIso(): string {
 	return new Date().toISOString();
@@ -269,7 +272,10 @@ function nowIso(): string {
 function persist(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	state.updatedAt = nowIso();
 	try {
-		pi.appendEntry(ENTRY_TYPE, state);
+		// Snapshot, not reference: appendEntry stores the object as-is, so a shared
+		// reference would make every historical entry show the *current* phase and
+		// /tree rewinds would read the newest state back.
+		pi.appendEntry(ENTRY_TYPE, JSON.parse(JSON.stringify(state)));
 	} catch (err) {
 		// Do not die silently: if the entry cannot be written, the next /resume would
 		// resurrect an older phase and look like the flow rewound on its own.
@@ -373,14 +379,16 @@ function sessionSlug(ctx: ExtensionContext): string {
 
 async function openInBrowser(pi: ExtensionAPI, absPath: string): Promise<boolean> {
 	try {
+		// exec does not throw on a non-zero exit: the code is the only signal we get.
+		let code: number | undefined;
 		if (process.platform === "win32") {
-			await pi.exec("cmd", ["/c", "start", "", absPath], { timeout: 8000 });
+			code = (await pi.exec("cmd", ["/c", "start", "", absPath], { timeout: 8000 }))?.code;
 		} else if (process.platform === "darwin") {
-			await pi.exec("open", [absPath], { timeout: 8000 });
+			code = (await pi.exec("open", [absPath], { timeout: 8000 }))?.code;
 		} else {
-			await pi.exec("xdg-open", [absPath], { timeout: 8000 });
+			code = (await pi.exec("xdg-open", [absPath], { timeout: 8000 }))?.code;
 		}
-		return true;
+		return code === undefined || code === 0;
 	} catch {
 		return false;
 	}
@@ -409,32 +417,65 @@ const SHELL_TOOLS = new Set(["bash", "sh", "shell", "zsh", "powershell", "pwsh",
 /** Sub-agent tool names differ per build (Agent / subagent / task …). Word boundary, not prefix. */
 const SUBAGENT_RE = /^(?:agent|subagent|task|delegate|spawn|parallel)(?:[_-]|$)/i;
 
+/** Note-like files are only allowed inside the scratch area (temp), not in the repo. */
+const SCRATCH_EXT_RE = /\.(?:md|txt|log|json|html?)$/i;
+
+/**
+ * Interpreter one-liners can write anything without ever looking like a write.
+ * We do not ban them (people inspect data that way), we only ban the ones that
+ * name a write API: `node -e "console.log(1)"` stays allowed.
+ */
+const INLINE_WRITE_RE =
+	/\b(?:node|deno|bun)\b[^|]*(?:\s-e\s|--eval|\beval\s)[^|]*(?:writeFile|appendFile|createWriteStream|writeSync|openSync|unlink|rmSync|rmdir|rename|copyFile|mkdirSync|spawn|execSync)/i;
+
+/** Python -c style one-liners that open or move files. */
+const PY_INLINE_WRITE_RE =
+	/\b(?:python|python3|py)\b[^|]*\s-c\s[^|]*(?:open\s*\(|shutil|os\.remove|os\.rename|os\.makedirs|subprocess)/i;
+
+/** Optional option clusters: `git -C repo commit`, `npm --prefix . install`, … */
+const OPTS = String.raw`(?:-[^\s]+\s+(?:[^\s]+\s+)?)*`;
+
+/** Repo-mutating shell verbs: blocked until the design is approved. */
+const PRE_APPROVAL_MUTATION_RE = new RegExp(
+	String.raw`\b(?:sed\s+-i|perl\s+-[a-z]*i\s+-p|git\s+${OPTS}(?:apply|checkout|restore|reset|commit|merge|rebase|add|mv|rm|pull|push|clean)\b|git\s+${OPTS}stash\s+(?!list\b|show\b)|(?:npm|pnpm|yarn)\s+${OPTS}(?:install|i|add|uninstall|remove|update|ci|link|publish)\b|pip3?\s+(?:install|uninstall)|chmod\s|chown\s|truncate)`,
+	"i",
+);
+
 /** Shell one-liners that create or modify file content. */
 const SHELL_WRITE_RE =
-	/\btee\b|\bSet-Content\b|\bAdd-Content\b|\bOut-File\b|\bNew-Item\b|\btouch\b|\bsed\s+-i\b|\bperl\s+-[a-z]*i\b|\bgit\s+apply\b|\bcp\b|\bmv\b|\bmkdir\b/i;
+	/\btee\b|\bSet-Content\b|\bAdd-Content\b|\bOut-File\b|\bNew-Item\b|\btouch\b|\bsed\s+-i\b|\bperl\s+-[a-z]*i\b|\bgit\s+apply\b|\bcp\b|\bmv\b|\bmkdir\b|\bsort\b[^|]*-o\b/i;
 
 /** Read-only commands whose arguments may legitimately quote scary strings. */
 const INSPECT_RE =
 	/^(?:rg|grep|egrep|fgrep|ag|ack|fd|find|cat|type|Get-Content|less|more|head|tail|wc|sort|uniq|cut|jq|echo|printf|git\s+(?:log|show|diff|grep|status|branch|remote|rev-parse|ls-files))\b/i;
 
-/** Repo-mutating shell verbs: blocked until the design is approved. */
-const PRE_APPROVAL_MUTATION_RE =
-	/\b(?:sed\s+-i|perl\s+-[a-z]*i\s+-p|tee|Set-Content|Add-Content|Out-File|New-Item|git\s+(?:apply|checkout|restore|reset|commit|stash|merge|rebase|add|mv|rm)|npm\s+(?:install|i|add|uninstall|ci)|pnpm\s+(?:add|install|remove)|yarn\s+(?:add|install|remove)|pip\s+install|chmod\s|chown\s|mv\s|cp\s|truncate)/i;
+/** Tools whose very name says they write. Anything else is assumed read-only. */
+const WRITE_TOOL_RE = /(?:write|edit|patch|replace|create|move|delete|remove|rename|insert|append|save)/i;
+const READ_ONLY_TOOL_RE = /^(?:read|ls|glob|grep|find|search|webfetch|fetch|list|todo|flow_|websearch|tree)/i;
 
-/** Note-like files stay writable before approval; real code does not. */
-const SCRATCH_EXT_RE = /\.(?:md|txt|log|json)$/i;
+/** Is `child` inside `parent` (case-insensitive on Windows)? */
+function isInside(parent: string, child: string): boolean {
+	const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+	const p = norm(resolve(parent));
+	const c = norm(resolve(child));
+	return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+}
 
-/** Is this path the page/artifact area of the current workspace? */
+/** Scratch area: the page directory and the OS temp dir. Repo files are never scratch. */
 function inScratchDir(cwd: string, target: string): boolean {
 	if (!target) return false;
 	const abs = resolve(cwd, target);
-	const root = resolve(cwd, ".pi") + sep;
-	return abs.startsWith(root) || SCRATCH_EXT_RE.test(abs);
+	if (isInside(resolve(cwd, ".pi"), abs)) return true;
+	try {
+		return isInside(tmpdir(), abs) && SCRATCH_EXT_RE.test(abs);
+	} catch {
+		return false;
+	}
 }
 
 /** Strip quotes and collapse whitespace before matching command shape. */
 function normalizeCmd(cmd: string): string {
-	return cmd.replace(/["'`]/g, "").replace(/\s+/g, " ").trim();
+	return cmd.replace(/["'`]/g, "").replace(/[^\S\r\n]+/g, " ").trim();
 }
 
 /** Drop output-suppression noise that is never a mutation on its own. */
@@ -442,69 +483,171 @@ function stripNoise(cmd: string): string {
 	return cmd
 		.replace(/\d?>>?\s*\/dev\/null/g, " ")
 		.replace(/&>\s*\/dev\/null/g, " ")
-		.replace(/\d?>&\d/g, " ");
+		.replace(/\d?>?&\d/g, " ");
 }
 
-/** Split a one-liner into independently executable segments (&&, ||, ;, |). */
-function cmdSegments(raw: string): string[] {
-	return stripNoise(normalizeCmd(raw))
-		.split(/&&|\|\||;|\|/)
-		.map((s) => s.trim())
-		.filter(Boolean);
-}
-
-/** Does this redirect target a real file (not /dev/null or a fd dup)? */
-function redirectsToFile(segment: string): boolean {
-	const m = segment.match(/(?<![0-9&])>>?\s*([^\s>|;&]+)/);
-	if (!m) return false;
-	const target = m[1];
-	if (target === "/dev/null" || /^&\d$/.test(target)) return false;
-	return /[/\\.]/.test(target);
-}
-
-/** Could this shell line destroy data or history? Evaluated per segment. */
-function isDestructive(raw: string): boolean {
-	for (const seg of cmdSegments(raw)) {
-		const readOnly = INSPECT_RE.test(seg) && !redirectsToFile(seg);
-		if (readOnly) continue;
-		if (/\brm\s+(?:-[a-z-]*[rf]|--recursive|--force)/i.test(seg)) return true;
-		if (/\bfind\b[^|]*-delete\b/.test(seg)) return true;
-		if (redirectsToFile(seg)) return true;
-		if (/\.\s*\/\s*\S/.test(seg) || /^\s*\.\s+/.test(seg)) return true;
-		if (/\bdd\s+if=|\btruncate\s+(?:--size|-s)\b|(^|\s):\s*>/.test(seg)) return true;
-		if (
-			/\bgit\b[^|]*\s(?:push\s+(?:-f\b|--force)|reset\s+--hard|clean\s+-[a-z]*f|checkout\s+(?:--\s|\.)|restore\s+(?:--\s|\.)|stash\s+drop|reflog\s+expire|branch\s+-D)/.test(
-				seg,
-			)
-		)
-			return true;
-		if (/\b(?:drop\s+(?:table|database|schema)|truncate\s+table)\b/i.test(seg)) return true;
-		if (/\b(?:Remove-Item)\b[^|]*-Recurse|\bshred\b|\bmkfs|\bformat\s+[a-z]:/i.test(seg)) return true;
-		if (/\b(?:del|erase)\s+\/[sq]\b|\b(?:rd|rmdir)\s+\/s\b/i.test(seg)) return true;
-	}
-	return false;
-}
-
-/** Shell line that mutates the repo (content, deps, history). */
-function mutatesRepo(raw: string): boolean {
-	for (const seg of cmdSegments(raw)) {
-		if (PRE_APPROVAL_MUTATION_RE.test(seg)) return true;
-		if (redirectsToFile(seg)) return true;
-	}
-	return false;
+interface Segment {
+	raw: string;
+	norm: string;
 }
 
 /**
- * Does this shell line create or change files, judged segment by segment?
- * Read-only commands keep their right to quote scary-looking arguments.
+ * Split a shell line into independently executable segments.
+ * Newlines are real separators; so is every command substitution body
+ * (`$(…)`, backticks, `<(…)`) — otherwise `cat $(rm -rf src)` reads as read-only.
  */
-function shellMutates(raw: string): boolean {
-	for (const seg of cmdSegments(raw)) {
-		if (redirectsToFile(seg)) return true;
-		if (INSPECT_RE.test(seg)) continue;
-		if (SHELL_WRITE_RE.test(seg) || PRE_APPROVAL_MUTATION_RE.test(seg)) return true;
+function segments(input: string, depth = 0): Segment[] {
+	const out: Segment[] = [];
+	for (const line of input.split(/\r?\n/)) {
+		const cleaned = stripNoise(line);
+		for (const piece of cleaned.split(/&&|\|\||;|\||&(?![>&])/)) {
+			const norm = normalizeCmd(piece);
+			if (norm) out.push({ raw: piece.trim(), norm });
+		}
+		if (depth < 3) {
+			const re = /\$\(([^()]*)\)|`([^`]*)`|<\(([^()]*)\)/g;
+			let m: RegExpExecArray | null;
+			while ((m = re.exec(line))) {
+				const body = m[1] ?? m[2] ?? m[3] ?? "";
+				if (body.trim()) out.push(...segments(body, depth + 1));
+			}
+			// `bash -c "echo hi > f"`: the payload is shell too, quotes are not protection.
+			const cmdPayload = /(?:^|\s)-[a-z]*c\s+"([\s\S]*?)"|(?:^|\s)-[a-z]*c\s+'([\s\S]*?)'/i.exec(line);
+			const inner = cmdPayload ? (cmdPayload[1] ?? cmdPayload[2] ?? "") : "";
+			if (inner.trim()) out.push(...segments(inner, depth + 1));
+		}
 	}
-	return mutatesRepo(raw);
+	return out;
+}
+
+/** Redirect targets that are real files (quoted targets included). */
+/** Redirect targets that are real files (quoted targets included, quotes respected). */
+function redirectTargets(rawSegment: string): string[] {
+	const out: string[] = [];
+	let quote = "";
+	for (let i = 0; i < rawSegment.length; i += 1) {
+		const ch = rawSegment[i];
+		if (quote) {
+			if (ch === quote) quote = "";
+			continue;
+		}
+		if (ch === '"' || ch === "'") {
+			quote = ch;
+			continue;
+		}
+		if (ch !== ">") continue;
+		if (i > 0 && /[0-9&]/.test(rawSegment[i - 1])) continue;
+		// `>>` is one redirect
+		let j = i + 1;
+		if (rawSegment[j] === ">") j += 1;
+		while (j < rawSegment.length && /\s/.test(rawSegment[j])) j += 1;
+		if (rawSegment[j] === "&") {
+			// fd duplication: >&2, >&1
+			j += 1;
+			while (j < rawSegment.length && /[0-9-]/.test(rawSegment[j])) j += 1;
+			i = j - 1;
+			continue;
+		}
+		const opener = rawSegment[j];
+		let target = "";
+		if (opener === '"' || opener === "'") {
+			const close = rawSegment.indexOf(opener, j + 1);
+			target = close === -1 ? rawSegment.slice(j + 1) : rawSegment.slice(j + 1, close);
+			i = close === -1 ? rawSegment.length : close;
+		} else {
+			let k = j;
+			while (k < rawSegment.length && !/[\s>|;&]/.test(rawSegment[k])) k += 1;
+			target = rawSegment.slice(j, k);
+			i = k - 1;
+		}
+		target = target.trim();
+		if (!target) continue;
+		if (target === "/dev/null" || /^nul$/i.test(target)) continue;
+		out.push(target);
+	}
+	return out;
+}
+
+function redirectsToFile(rawSegment: string): boolean {
+	return redirectTargets(rawSegment).length > 0;
+}
+
+/** Remove the *contents* of quoted spans, so quoted text cannot hide a verb. */
+function stripQuoted(raw: string): string {
+	return raw
+		.replace(/"([^"]*)"/g, '""')
+		.replace(/'([^']*)'/g, '""');
+}
+
+/** Could this single segment destroy data or history? */
+function segmentDestroys(seg: Segment): boolean {
+	// A read-only verb keeps its right to quote scary arguments (rg "rm -rf" docs),
+	// but anything outside the quotes is still judged as a command.
+	const s = INSPECT_RE.test(seg.norm) ? normalizeCmd(stripQuoted(seg.raw)) : seg.norm;
+	if (/\brm\b[^|]*\s(?:-[a-zA-Z]*[rRf][a-zA-Z]*|--recursive|--force)/.test(s)) return true;
+	if (/\bfind\b[^|]*-delete\b/.test(s)) return true;
+	if (redirectsToFile(seg.raw)) return true;
+	if (/\.\s*\/\s*\S/.test(s) || /^\s*\.\s+/.test(s)) return true;
+	if (/\bdd\s+if=|\btruncate\s+(?:--size|-s)\b|(^|\s):\s*>/.test(s)) return true;
+	if (
+		/\bgit\b[^|]*\s(?:push\s+(?:-f\b|--force|\+\w)|reset\s+--hard|clean\s+-[a-z]*f|checkout\s+(?:--\s|\.)|restore\s+(?:--\s|\.)|stash\s+drop|reflog\s+expire|branch\s+-D)/.test(
+			s,
+		)
+	)
+		return true;
+	if (/\b(?:drop\s+(?:table|database|schema)|truncate\s+table)\b/.test(s)) return true;
+	if (/\bRemove-Item\b[^|]*-Recurse|\bshred\b|\bmkfs|\bformat\s+[a-z]:/.test(s)) return true;
+	if (/\b(?:del|erase)\s+\/[sq]\b|\b(?:rd|rmdir)\s+\/s\b/.test(s)) return true;
+	return false;
+}
+
+/** Could this single segment write or change files? */
+function segmentWrites(seg: Segment): boolean {
+	if (redirectsToFile(seg.raw)) return true;
+	if (SHELL_WRITE_RE.test(seg.norm) || PRE_APPROVAL_MUTATION_RE.test(seg.norm)) return true;
+	if (INLINE_WRITE_RE.test(seg.norm) || PY_INLINE_WRITE_RE.test(seg.norm)) return true;
+	return false;
+}
+
+/** Path-like tokens a segment names (flags dropped). */
+function pathTokens(norm: string): string[] {
+	return norm
+		.split(/\s+/)
+		.filter((t) => !t.startsWith("-") && (t.includes("/") || t.includes("\\") || /\.[a-z0-9]{1,6}$/i.test(t)))
+		.map((t) => t.replace(/^[("']+|[)"',;]+$/g, ""))
+		.filter((t) => t && !/^https?:/i.test(t));
+}
+
+/** Does every path this segment touches live in the scratch area? */
+function segmentStaysInScratch(cwd: string, seg: Segment): boolean {
+	const targets = [...redirectTargets(seg.raw), ...pathTokens(seg.norm)];
+	if (targets.length === 0) return false;
+	return targets.every((t) => inScratchDir(cwd, t));
+}
+
+/** Does every segment of this line stay inside the scratch area? */
+function shellTouchesOnlyScratch(cwd: string, raw: string): boolean {
+	const segs = segments(raw);
+	return segs.length > 0 && segs.every((seg) => segmentStaysInScratch(cwd, seg));
+}
+
+/** Could this shell line destroy data or history? */
+function isDestructive(raw: string): boolean {
+	return segments(raw).some(segmentDestroys);
+}
+
+/** Shell line that mutates the repo, ignoring writes that stay in the scratch area. */
+function shellMutates(cwd: string, raw: string): boolean {
+	return segments(raw).some(
+		(seg) => (segmentDestroys(seg) || segmentWrites(seg)) && !segmentStaysInScratch(cwd, seg),
+	);
+}
+
+/** Is this tool name a file-writing tool (write / edit / patch / any extension tool that writes)? */
+function isWriteToolName(name: string): boolean {
+	if (SUBAGENT_RE.test(name)) return false;
+	if (READ_ONLY_TOOL_RE.test(name)) return false;
+	return WRITE_TOOL_RE.test(name);
 }
 
 /**
@@ -559,7 +702,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.1";
+const PKG_VERSION = "0.1.2";
 
 /* --------------------------------------------------------------------- init */
 
@@ -618,19 +761,18 @@ export default function johariFlow(pi: ExtensionAPI) {
 		// never spliced into the assistant message — that would put words the model
 		// never wrote into its own transcript and into every later turn.
 		const gap = describeSelfCheckGap(report);
-		try {
-			pi.appendEntry(SELFCHECK_ENTRY_TYPE, {
-				at: nowIso(),
-				phase: state.phase,
-				verdict: report.verdict,
-				found: report.found,
-				missing: report.missing,
-				short: report.short,
-				thin: report.thin,
-			});
-		} catch {
-			/* best effort */
-		}
+		// Recorded on turn_end, never here: appendEntry runs *before* the assistant
+		// message is appended, so writing now would steal the leaf and file the
+		// self-check entry between the question and its answer.
+		pendingSelfCheck = {
+			at: nowIso(),
+			phase: state.phase,
+			verdict: report.verdict,
+			found: report.found,
+			missing: report.missing,
+			short: report.short,
+			thin: report.thin,
+		};
 		try {
 			ctx.ui.notify(`乔哈里自检 · ${gap}`, "warning");
 		} catch {
@@ -649,6 +791,23 @@ export default function johariFlow(pi: ExtensionAPI) {
 		}
 	});
 
+	// The self-check record lands after the turn, so the session tree keeps
+	// question → answer in order and the entry hangs off the assistant message.
+	try {
+		pi.on("turn_end", () => {
+			if (!pendingSelfCheck) return;
+			const payload = pendingSelfCheck;
+			pendingSelfCheck = null;
+			try {
+				pi.appendEntry(SELFCHECK_ENTRY_TYPE, payload);
+			} catch {
+				/* best effort */
+			}
+		});
+	} catch {
+		/* older hosts: the verdict stays in the notify only */
+	}
+
 	/* ------------------------------------------------------------- hard gates */
 
 	pi.on("tool_call", (event, ctx) => {
@@ -657,17 +816,27 @@ export default function johariFlow(pi: ExtensionAPI) {
 		const lower = name.toLowerCase();
 		const input = (event.input ?? {}) as Record<string, unknown>;
 		const cmd = String(input.command ?? input.script ?? input.cmd ?? "");
+		const targetPath = String(input.path ?? input.file_path ?? input.filePath ?? "");
 		const isShell = SHELL_TOOLS.has(lower);
 		const isSubAgent = SUBAGENT_RE.test(lower);
+		const isFileTool = isWriteToolName(lower);
+		const scratchPath =
+			targetPath ||
+			String(
+				(input.paths as string[] | undefined)?.[0] ??
+					input.target ??
+					input.destination ??
+					"",
+			);
 
 		if (state.phase === "intent") {
 			const writesFile =
-				lower === "write" || lower === "edit" || (isShell && shellMutates(cmd));
+				(isFileTool && !inScratchDir(ctx.cwd, scratchPath)) || (isShell && shellMutates(ctx.cwd, cmd));
 			if (writesFile) {
 				return {
 					block: true,
 					reason:
-						"Johari Flow 处于「意图澄清」阶段：意图未确认前禁止写文件（含 shell 重定向 / Set-Content / tee）。先调用 flow_page {kind:\"intent\"} 出确认页，等用户确认后再 flow_plan 推进。",
+						"Johari Flow 处于「意图澄清」阶段：意图未确认前不改项目文件（含 shell 重定向 / Set-Content / tee）。允许在 <cwd>/.pi/ 下写页面与草稿（含 shell 重定向进去）。先调用 flow_page {kind:\"intent\"} 出确认页，等用户确认后再 flow_plan 推进。",
 				};
 			}
 			if (isSubAgent) {
@@ -681,23 +850,21 @@ export default function johariFlow(pi: ExtensionAPI) {
 
 		// Before approval every phase is guarded: code changes must wait for the user's verdict.
 		if (isPreApproval(state) && state.phase !== "intent") {
-			const targetPath = String(input.path ?? input.file_path ?? input.filePath ?? "");
-			const editsProjectFile =
-				(lower === "write" || lower === "edit") && !inScratchDir(ctx.cwd, targetPath);
-			const shellWrites = isShell && shellMutates(cmd);
+			const editsProjectFile = isFileTool && !inScratchDir(ctx.cwd, scratchPath);
+			const shellWrites = isShell && shellMutates(ctx.cwd, cmd);
 			if (editsProjectFile || shellWrites) {
 				return {
 					block: true,
 					reason: [
 						`Johari Flow 处于 ${PHASE_CN[state.phase]} 阶段：方案未获用户批准前不改项目文件。`,
-						"允许的例外：.pi/ 下的页面与草稿、.md/.txt/.log 笔记、临时目录。",
+						"允许的例外：<cwd>/.pi/ 下的页面与草稿（含 shell 重定向进去）、系统临时目录。",
 						"要把改动写进方案页（含回退方式），拿到用户回执后 approve，再动代码。",
 					].join(""),
 				};
 			}
 		}
 
-		if (isPreApproval(state) && isShell && isDestructive(cmd)) {
+		if (isPreApproval(state) && isShell && isDestructive(cmd) && !shellTouchesOnlyScratch(ctx.cwd, cmd)) {
 			return {
 				block: true,
 				reason: `Johari Flow 处于 ${PHASE_CN[state.phase]} 阶段：方案未批准前禁止不可逆命令。把这条命令写进决策页，让用户拍板。`,
@@ -735,6 +902,9 @@ export default function johariFlow(pi: ExtensionAPI) {
 			),
 			to: Type.Optional(StringEnum(TRANSITION_TARGETS, { description: "action=advance 时：目标阶段" })),
 			reason: Type.Optional(Type.String({ description: "action=advance 时：为什么现在可以推进（一句话）" })),
+			optionId: Type.Optional(
+				Type.String({ description: "action=approve 时：用户选中的选项 id（如 A / keep），用于在看记录时认出他选了哪个" }),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			switch (params.action) {
@@ -913,6 +1083,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 				case "abort": {
 					const from = state.phase;
 					state = initialState();
+					selfCheckNags = 0;
 					persist(pi, ctx);
 					return reply(`流程已终止（${PHASE_CN[from]} → 空闲）。`);
 				}
@@ -1013,7 +1184,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 			persist(pi, ctx);
 
 			let opened = false;
-			if (params.open !== false) opened = await openInBrowser(pi, absPath);
+			if (params.open !== false && ctx.hasUI) opened = await openInBrowser(pi, absPath);
 			try {
 				ctx.ui.notify(opened ? `已打开 ${params.kind} 页面` : `页面已生成：${relPath}`, "info");
 			} catch {
@@ -1245,7 +1416,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 					ctx.ui.notify("没有进行中的流程", "warning");
 					return;
 				}
-				if (state.phase !== "execute" && state.phase !== "approved" && state.phase !== "report") {
+				if (state.phase !== "execute" && state.phase !== "report") {
 					ctx.ui.notify(
 						`当前阶段 ${PHASE_CN[state.phase]} 不能出完成报告（先到 ⑥ 监督执行）`,
 						"warning",
@@ -1265,6 +1436,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 			if (head === "abort") {
 				const from = state.phase;
 				state = initialState();
+				selfCheckNags = 0;
 				persist(pi, ctx);
 				ctx.ui.notify(`流程已终止（${PHASE_CN[from]} → 空闲）`, "info");
 				return;

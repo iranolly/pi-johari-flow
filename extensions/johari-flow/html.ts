@@ -148,13 +148,22 @@ export interface PageSpec {
 
 /** CSS is model-authored: strip anything that could close the style element or fetch remote code. */
 function sanitizeCss(src: string): string {
-	return String(src)
-		.replace(/<\/?\s*(?:style|script|link|iframe)[^>]*>/gi, "")
-		.replace(/<!--|-->/g, "")
-		.replace(/@import[^;]*;?/gi, "")
-		.replace(/javascript\s*:/gi, "")
-		.replace(/expression\s*\(/gi, "(")
-		.replace(/url\s*\(\s*['"]?\s*(?:javascript|data):/gi, "url(");
+	return (
+		String(src)
+			// Decode CSS escapes first: `@\69 mport` is the same thing as `@import`.
+			.replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+			.replace(/\\([\s\S])/g, "$1")
+			.replace(/<\/?\s*(?:style|script|link|iframe)\b[^>]*>?/gi, "")
+			.replace(/<!--|-->/g, "")
+			.replace(/@import[^;]*;?/gi, "")
+			.replace(/javascript\s*:/gi, "")
+			.replace(/expression\s*\(/gi, "(")
+			.replace(/(?:behavior|-moz-binding)\s*:/gi, "")
+			// Remote CSS is a data leak; only inline images survive.
+			.replace(/url\s*\(\s*(['"]?)([^)]*)\)/gi, (_m, _q: string, target: string) =>
+				/^\s*data:image\//i.test(target) ? `url(${target.trim()})` : "none",
+			)
+	);
 }
 
 function esc(s: string): string {

@@ -91,11 +91,21 @@ export interface SelfCheckReport {
  * block itself. The last matching line wins.
  */
 export function findSelfCheckBlock(text: string): string | null {
-	const re = /(?:^|\n)[ \t]*(?:#{1,6}[ \t]*)?(?:[-*>][ \t]*)?\**[^\n]{0,4}乔哈里自检\**/g;
-	let last: RegExpExecArray | null = null;
-	for (let m = re.exec(text); m !== null; m = re.exec(text)) last = m;
-	if (!last) return null;
-	return text.slice(last.index);
+	// Only a heading-shaped line counts: markdown markers, then the title, nothing else.
+	const re = /(?:^|\n)[ \t]{0,3}(?:[-*+>][ \t]+)*(?:#{1,6}[ \t]+)?\**[ \t]*乔哈里自检/g;
+	const candidates: number[] = [];
+	for (let m = re.exec(text); m !== null; m = re.exec(text)) candidates.push(m.index);
+	if (!candidates.length) return null;
+	// Walk backwards: a real block is followed by dimension labels, so a trailing
+	// one-line mention (`乔哈里自检：已补齐`) cannot hide the block above it.
+	for (let i = candidates.length - 1; i >= 0; i -= 1) {
+		const tail = text.slice(candidates[i]);
+		const labelled = SELF_CHECK_DIMENSIONS.filter((d) =>
+			new RegExp(`\\*{0,2}${d.key}\\*{0,2}\\s*[:：]`).test(tail),
+		).length;
+		if (labelled >= 3 || i === 0) return tail;
+	}
+	return text.slice(candidates[candidates.length - 1]);
 }
 
 /** Content the model wrote after a dimension label, whitespace stripped. */
@@ -178,7 +188,7 @@ export function selfCheckRules(): string {
 		"",
 		"硬约束：",
 		"- hook 只**校验**有没有写、八项齐不齐、每项有没有实际内容；它不会替你生成自检，也不会给你打分。",
-		"- 每项标签后面必须有内容（≥6 个非空白字符），只写「无」会被判为未写。",
+		"- 每项标签后面必须有内容（≥4 个非空白字符），只写「无」会被判为未写。",
 		"- 缺项时你会收到一条 followUp 提醒，那不是新任务，是让你把自检补完。",
 		"- 标题必须是行首的独立一行（`**乔哈里自检**` 或 `## 乔哈里自检`），正文里提到这句话不算。",
 	].join("\n");

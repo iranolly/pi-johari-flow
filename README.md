@@ -5,8 +5,11 @@ agent **prove it understood you before it writes anything** — intent page, fac
 option design, cross review, supervised execution, HTML report. Enforced by hooks, not by good manners.
 
 ```bash
-pi install git:github.com/iranolly/pi-johari-flow
+pi install git:github.com/iranolly/pi-johari-flow@v0.1.2
 ```
+
+Already installed? `pi update --extensions` pulls the newest tag, then `/reload` inside a session
+(or restart Pi) to pick it up.
 
 Requires Pi ≥ 1.2 (Node ≥ 22.6). Nothing else — no build step, no server, no network calls.
 
@@ -39,16 +42,19 @@ The full browser-driven version: run `/flow start <goal>` and follow the pages.
 
 | Phase | What the agent does | What is blocked |
 | --- | --- | --- |
-| ① intent | mines your goal, opens a confirmation page | every file write, every sub-agent dispatch |
-| ② research | read-only fact gathering, each claim carries evidence | project file writes, shell mutations, destructive commands |
+| ① intent | mines your goal, opens a confirmation page | project code writes and shell writes; sub-agent dispatch (pages and notes under `.pi/` stay writable) |
+| ② research | read-only fact gathering, each claim carries evidence | project code writes, shell mutations, destructive commands |
 | ③ design | ≥2 options with cost and rollback | same as above |
 | ④ review | cross review from different angles | same as above |
 | ⑤ approved | recorded approval with your words | nothing (gate lifted) |
 | ⑥ execute | dispatch → verify → ask → dispatch loop | nothing, but scope changes must be asked |
 | ⑦ report | HTML report page, no code, no jargon | finishing without a report |
+| done | closed | nothing; `advance to="idle"` starts fresh |
 
 Phase transitions live in `extensions/johari-flow/types.ts`; anything not in that graph is
-refused by `flow_plan`.
+refused by `flow_plan`. Three transitions have extra conditions: `research` needs the intent
+confirmed, `execute` needs a recorded approval, and `done` needs a report page. A report page
+can only be produced in `execute` or `report`.
 
 ## Three tools, one command
 
@@ -56,8 +62,12 @@ refused by `flow_plan`.
 | --- | --- |
 | `flow_plan` | `start` / `setGoal` / `status` / `advance` / `confirm` / `approve` / `abort` |
 | `flow_page` | intent, decision and report pages (HTML, offline) |
-| `flow_ask` | one decision, terminal picker plus an optional HTML brief — blocks until answered |
+| `flow_ask` | one decision, terminal picker plus an optional HTML brief — blocks until answered when a UI exists, returns `answered:false` in `-p` / JSON mode |
 | `/flow` | `status` · `start <goal>` · `approve` · `report` · `abort` |
+
+`setGoal` re-opens the intent phase (goal changes void the old confirmation). It is refused
+after approval — go back to `design` first. `flow_ask` needs at least two options; `flow_page`
+takes `open:false` to write a page without launching a browser.
 
 ## The pages
 
@@ -68,18 +78,39 @@ choice copies a paste-ready receipt back into the chat.
 
 ![An intent page](docs/page-intent.png)
 
-Thirteen carriers, picked by the shape of the content: `flow`, `timeline`, `stats`, `bars`,
-`compare`, `callout`, `loop`, `facts`, `tree`, `branch`, `sequence`, `graph`, `state`.
+Thirteen carriers, picked by the shape of the content. Each `blocks[]` entry needs `kind` plus
+the field named below:
+
+| `kind` | field | use it for |
+| --- | --- | --- |
+| `flow` | `steps` | a linear chain of steps, 2–6 |
+| `timeline` | `events` | things that happened in order |
+| `stats` | `stats` | a few big numbers |
+| `bars` | `bars` (+ `caption`) | comparing magnitudes |
+| `compare` | `left` / `right` | before vs after, option vs option |
+| `callout` | `text` (+ `tone`) | one thing the reader must not miss |
+| `loop` | `steps` | a cycle that returns to step 1 |
+| `facts` | `facts` | label → value pairs |
+| `tree` | `items` (flat `id` + `parent`) | hierarchy, code map |
+| `branch` | `items` (flat `id` + `parent` + `cond`) | if-this-then-that paths |
+| `sequence` | `actors` + `messages` | who says what to whom, in order |
+| `graph` | `nodes` + `edges` | what depends on what |
+| `state` | `states` + `transitions` | states and jumps between them |
+
+An unknown or misspelled `kind` renders a visible warning card instead of a silent blank spot.
 Report pages are written for people who never read code: no code blocks, no file names.
 
 ![Step chain and branch diagram](docs/page-blocks.png)
 
 ## The self-check
 
-Every user-facing reply from the model must end with eight labelled lines: evidence, wording,
-framing, assumptions, unknowns, hidden costs, consistency, next step. The hook does not generate
-it and does not grade it — it only checks that all eight are present and carry real content, and
-nudges (at most twice per phase) when they are not.
+Every user-facing reply from the model must end with eight labelled lines: 证据 (evidence), 用词
+(wording), 框架 (framing), 假设 (assumptions), 未知 (unknowns), 隐藏 (hidden trade-offs),
+一致性 (consistency), 下一步 (next step). The labels are Chinese on purpose — the hook matches
+them literally, and a reworded label counts as missing. The hook does not generate the section
+and does not grade it: it checks that all eight labels appear, each followed by at least four
+non-space characters, and nudges (at most twice per phase) when they are not. Short, honest lines
+are enough; padding to please the checker is not.
 
 ## Requirements and graceful degradation
 
@@ -88,7 +119,7 @@ nudges (at most twice per phase) when they are not.
   the protocol switches to *degraded self-review*: you review from several angles yourself and
   label the result as degraded on every page.
 - **UI is optional.** In `-p` / JSON mode `flow_ask` reports that it could not ask instead of
-  pretending; pages are written but no browser tab is opened.
+  pretending, and `flow_page` writes the page without launching a browser.
 
 ## Comparison
 
@@ -110,7 +141,8 @@ batched into independent single choices instead of a chain of confirmations.
   sanitised, so a stray model-written stylesheet cannot inject markup.
 - Gates are heuristics over tool names and shell text. Read-only commands keep their right to
   quote dangerous strings; genuinely novel ways to write a file can still slip through. Treat the
-  gates as a strong seat belt, not as a sandbox.
+  gates as a strong seat belt, not as a sandbox. Writes that stay inside `<cwd>/.pi/` (pages,
+  scratch notes) are always allowed, so the flow itself never blocks on its own output.
 - `abort` always works: `flow_plan {action:"abort"}` (or `/flow abort`) lifts every gate
   immediately.
 - Nothing is sent anywhere. The only files created are under `.pi/flow/` in your workspace
@@ -119,19 +151,21 @@ batched into independent single choices instead of a chain of confirmations.
 ## Uninstall and cleanup
 
 ```bash
-pi remove pi-johari-flow      # forget the package
-rm -rf .pi/flow               # delete generated pages
+pi remove git:github.com/iranolly/pi-johari-flow   # package name alone will not match
+rm -rf .pi/flow                                   # delete generated pages
 ```
+
+Add `.pi/` to your `.gitignore` if you do not want the generated pages in version control.
 
 ## Development
 
 ```bash
-npm test        # 40 checks, no dependencies: node --experimental-strip-types tests/run.mjs
+npm test        # 69 checks, no dependencies: node --experimental-strip-types tests/run.mjs
 ```
 
 The suite links the three host packages Pi already ships and drives the extension through the
 same hooks Pi uses (gates, phase machine, page writing, CSS sanitiser, self-check, `flow_ask`,
-`setGoal`, `abort`). See `CHANGELOG.md` for what changed in 0.1.1.
+`setGoal`, `abort`). See `CHANGELOG.md` for what changed in 0.1.2.
 
 ## License
 

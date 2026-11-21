@@ -4,6 +4,79 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.1.2] — 2026-11-22
+
+Second audit pass: two full code reviews plus a doc-vs-code review, an external
+contract check, and a hand-built probe matrix (three phases × 40 shell commands).
+Most of this release is gate correctness — the heuristics that decide whether a
+command may run.
+
+### Fixed — gates
+
+- **Multi-line shell commands are split before analysis.** `cat README.md` on one
+  line and `rm -rf src` on the next used to merge into one segment that the
+  read-only short-circuit allowed through.
+- **Command substitutions are inspected.** `$(…)`, backticks, `<(…)` and
+  `bash -c "…"` payloads are re-parsed as their own segments, so
+  `jq . $(rm -rf build)` no longer passes as a read.
+- **Option prefixes no longer hide mutations.** `git -C sub commit`,
+  `git --git-dir=.git commit`, `npm --prefix . install` are matched.
+- **Redirections are parsed character by character and respect quotes.**
+  `echo hi > out`, `> out`, Chinese or spaced paths — all counted as file
+  writes; `/dev/null` and `>&2` are not.
+- **Writes that stay inside `<cwd>/.pi/` are allowed everywhere**, including the
+  destructive gate, so the flow never blocks on its own pages or notes. The
+  refusal text now states that boundary instead of promising `.md` notes
+  anywhere.
+- **Read-only words stop hiding destruction.** `find . -delete` and
+  `git branch -D` were dead rules behind one `continue`; they are evaluated with
+  quoted text stripped, so `rg "rm -rf" docs` still passes.
+- **Every write-shaped tool name is gated**, not just `write`/`edit`
+  (`ast_grep_replace`, MCP writers, `patch`, `create`, …).
+
+### Fixed — silent failures
+
+- **Concurrent page writes cannot overwrite.** Pages are created with `O_EXCL`
+  and retried on `EEXIST`; 12 pages in one turn produce 12 files.
+- **State is persisted as a snapshot**, so `/tree` rollback no longer leaves
+  every history entry pointing at the live object.
+- **A corrupt phase clamps to `idle`** instead of deadlocking the flow with an
+  empty transition list.
+- **Unknown block kinds render a visible warning card** (listing the 13 valid
+  kinds) instead of a blank page.
+- **Page failures are reported.** A page that could not be written says so and
+  the tool refuses to let the model claim it was shown.
+- **`/flow report` refuses the illegal `approved → report` edge.**
+
+### Fixed — page behaviour
+
+- **Option highlighting no longer builds selectors by string concatenation**
+  (a quote in an id used to throw and kill every button on the page).
+- **Copy-path yields a real Windows path** (`C:\dir\x.html`, not
+  `/C:/dir/x.html` or `%20`-escaped text).
+- **Loop arrows end where the pills end** instead of a fixed 300px.
+- **A page-script syntax error is now a test failure**: one stray escape used to
+  disable every interactive feature silently.
+
+### Changed
+
+- `flow_page` no longer opens a browser when there is no interactive UI.
+- `openInBrowser` checks the exit code, so "page opened" is not claimed on
+  failure.
+- The self-check threshold is one number (≥4 non-space characters per label)
+  instead of a 4/6/40 mix; `thin` is advisory only.
+- `flow_plan` accepts `optionId`, so approval records name the option the user
+  actually picked.
+- `flow_ask` asks with at least two options and reports `answered:false` instead
+  of guessing.
+
+### Added
+
+- 69-check test suite in `tests/` (was 41), including the multi-line,
+  substitution, option-prefix, redirection, scratch-exception and
+  version-drift cases.
+- Changelog/version consistency checks.
+
 ## [0.1.1] — 2026-11-22
 
 Product pass after an external audit (code review, doc/contract review, Pi API
