@@ -203,6 +203,7 @@ idle → intent → research → design → review → approved → execute → 
 - `summary` 一段话讲清「这页要你确认什么」。页面顶部自动生成目录（按节跳转）。
 - `tone` 选 `facts` / `assumptions` / `unknowns` / `risks` / `deliverables` 会给标题竖条换色，别全用 `plain`。
 - 五种结构图（`tree`/`branch`/`sequence`/`graph`/`state`）都用**扁平列表 + `parent` 指向**，不要写嵌套结构：`tree`/`branch` 用 `items[{id,parent?,label,note?,cond?}]`；`sequence` 用 `actors[]` + `messages[{from,to,text?,style?}]`（`style:"dashed"` 表示回复/异步，`from===to` 画自调用）；`graph` 用 `nodes[{id,label,kind?}]` + `edges[{from,to,label?}]`；`state` 用 `states[{id,label,kind?:"start"|"plain"|"end"}]` + `transitions[{from,to,label?}]`（相邻向右画直线，其他画上弧）。
+- 正文、`items`、`lead` 里的本地路径（`comet-audit/timeline.html`、`notes/a.png`）会自动变成可点链接 —— 文件真的存在才变，不存在就保持等宽文字；`https://…` 网址也会自动可点。不用手写链接语法。
 - 页面只有出场动画（淡入/条形生长/回环旋转），**没有步进播放**，所以别规划「点一下看下一步」的叙事；一屏内要能读完。
 - 默认版式**确实放不下**时才传 `css`（整页自定义样式，追加在默认样式之后并可覆盖）；能用现有 14 种块解决就别写样式。
 - 要放图就用 `image` 块：`images[{src,caption?,alt?}]`，`src` 写**本地文件路径**（相对项目根目录或绝对路径），页面会把图直接嵌进 HTML，所以页面离线也能看。远程 `http(s)` 图会被拒绝（会泄露「这页被人看过」）；先下载到本地再引用。单张 ≤6MB、整页 ≤24MB，超了会在图上位置显示一行黄色提示，不会静默变空白。一行纯文本 `![说明](路径)` 放在 `body` 里也会变成同样的图。

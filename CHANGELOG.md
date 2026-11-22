@@ -4,6 +4,25 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.1.8] — 2026-11-22
+
+Report copy pointed at files the reader could not open: every path was plain text.
+
+### Added
+
+- **Local paths become links.** A path in `body`, `items`, `lead` or a block (`comet-audit/timeline.html`,
+  `notes/a.png`, `05-report.html`) renders as an anchor to the real file when the file exists —
+  resolved against the project root first, then the page's own folder, so a report can link its
+  sibling pages. Missing files stay monospace code, so a wrong path is visible instead of clickable.
+- **Bare `https://` URLs are clickable** (markdown links keep working and are never double-wrapped).
+- A path inside parentheses — the way these pages usually write evidence — now matches too; before,
+  only a space before the path did.
+
+### Tests
+
+- 88 checks (was 85): D2j existing paths become file links, D2k a missing path stays code,
+  D2l bare urls become links without double-wrapping.
+
 ## [0.1.7] — 2026-11-22
 
 Pages could draw diagrams but never show a picture: there was no image block, and an

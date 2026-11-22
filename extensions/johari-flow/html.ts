@@ -14,6 +14,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export type Tone = "plain" | "facts" | "assumptions" | "unknowns" | "risks" | "deliverables";
 
@@ -191,6 +192,30 @@ function esc(s: string): string {
 /** Only these link shapes are emitted as <a>: anything else (javascript:, data:) stays text. */
 const SAFE_HREF = /^(https?:\/\/|mailto:|file:\/\/|#|\/|\.\/|\.\.\/)/i;
 
+/**
+ * Where a bare path in the copy should point. Set for the duration of one render:
+ * `base` is the project root, `dir` the folder the page is written into (so a
+ * report can link to its sibling pages).
+ */
+let renderBase = "";
+let renderDir = "";
+
+/** A path becomes a link only when the file is really there; otherwise it stays code. */
+function pathHref(p: string): string | null {
+	if (/:\d+$/.test(p)) return null; // `file.ts:42` — a browser cannot jump to a line
+	const candidates = isAbsolute(p)
+		? [p]
+		: [renderBase && resolvePath(renderBase, p), renderDir && resolvePath(renderDir, p)].filter(Boolean) as string[];
+	for (const candidate of candidates) {
+		try {
+			if (statSync(candidate).isFile()) return pathToFileURL(candidate).href;
+		} catch {
+			/* not there: keep it as text */
+		}
+	}
+	return null;
+}
+
 function inline(s: string): string {
 	let out = esc(s);
 	out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -201,7 +226,28 @@ function inline(s: string): string {
 			? `<a href="${href}" target="_blank" rel="noreferrer noopener">${text}</a>`
 			: `${text} (${href})`,
 	);
-	out = out.replace(/(^|\s)((?:[A-Za-z]:)?[\w.@+-]*(?:[/\\][\w.@+-]+)+\.\w{1,6}(?::\d+)?)/g, '$1<code class="path">$2</code>');
+	// Bare http(s) links stay clickable; an href we just wrote is never wrapped twice.
+	const beforeUrls = out;
+	out = out.replace(/(^|[\s(（])(https?:\/\/[^\s<>()（）\u3000-\u303f]+)/g, (all, pre: string, raw: string, offset: number) => {
+		const lead = beforeUrls.slice(Math.max(0, offset), offset + pre.length);
+		if (/href="$/i.test(lead)) return all;
+		const url = raw.replace(/[.,;:!?]+$/, "");
+		const tail = raw.slice(url.length);
+		return `${pre}<a href="${url}" target="_blank" rel="noreferrer noopener">${url}</a>${tail}`;
+	});
+	// A bare file name (`05-report.html`) links only when the file really exists — never
+	// wrap it in <code>, so version strings like 0.1.7 stay plain text.
+	out = out.replace(
+		/(^|[\s(（])([\w.@+-]+\.(?:html?|png|jpe?g|gif|webp|svg|md|pdf|json|csv|txt|xlsx?|zip|mp4|mov))(?![[\w\/])/gi,
+		(all, pre: string, p: string) => {
+			const href = pathHref(p);
+			return href ? `${pre}<a class="pathlink" href="${href}">${p}</a>` : all;
+		},
+	);
+	out = out.replace(/(^|[\s(（])((?:[A-Za-z]:)?[\w.@+-]*(?:[/\\][\w.@+-]+)+\.\w{1,6}(?::\d+)?)/g, (_all, pre: string, p: string) => {
+		const href = pathHref(p);
+		return href ? `${pre}<a class="pathlink" href="${href}">${p}</a>` : `${pre}<code class="path">${p}</code>`;
+	});
 	return out;
 }
 
@@ -309,6 +355,16 @@ const MD_IMAGE_RE = /^\s*!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?\s*\)\s*$/;
 
 /** Tiny Markdown subset: headings, lists, tables, fences, quotes, paragraphs. */
 export function mdToHtml(src: string, base = process.cwd(), budget: ImageBudget = { left: IMG_MAX_TOTAL }): string {
+	const prevBase = renderBase;
+	if (base) renderBase = base;
+	try {
+		return mdToHtmlInner(src, base, budget);
+	} finally {
+		renderBase = prevBase;
+	}
+}
+
+function mdToHtmlInner(src: string, base: string, budget: ImageBudget): string {
 	const lines = src.replace(/\r\n/g, "\n").split("\n");
 	const out: string[] = [];
 	let list: "ul" | "ol" | null = null;
@@ -489,6 +545,8 @@ code{
   border-radius:4px;padding:.1em .38em;color:#dcd9d2
 }
 code.path{color:#c9c2b2;background:transparent;border:0;border-bottom:1px dotted var(--line-2);border-radius:0;padding:0}
+a.pathlink{color:#d8c7a2;text-decoration:none;border-bottom:1px dotted var(--accent-dim);word-break:break-all}
+a.pathlink:hover{color:var(--accent);border-bottom-color:var(--accent)}
 pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;overflow:auto;margin:0 0 16px}
 pre code{background:none;border:0;padding:0;font-size:12.5px;line-height:1.6}
 blockquote{
@@ -1229,11 +1287,29 @@ function renderBlocks(blocks: Block[] | undefined, ctx: RenderCtx): string {
 
 export function renderPage(
 	spec: PageSpec,
-	meta: { phase: string; cwd: string; sessionId: string; project?: string; version?: string },
+	meta: { phase: string; cwd: string; sessionId: string; project?: string; version?: string; dir?: string },
 ): string {
 	// Relative image paths resolve against the project root, and the whole page
 	// shares one byte budget so a dozen screenshots cannot make a 100MB file.
 	const ctx: RenderCtx = { base: meta.cwd || process.cwd(), budget: { left: IMG_MAX_TOTAL } };
+	// Bare paths in the copy become links to the real file when it exists.
+	const prevBase = renderBase;
+	const prevDir = renderDir;
+	renderBase = ctx.base;
+	renderDir = meta.dir ?? "";
+	try {
+		return renderPageInner(spec, meta, ctx);
+	} finally {
+		renderBase = prevBase;
+		renderDir = prevDir;
+	}
+}
+
+function renderPageInner(
+	spec: PageSpec,
+	meta: { phase: string; cwd: string; sessionId: string; project?: string; version?: string; dir?: string },
+	ctx: RenderCtx,
+): string {
 	const sections = spec.sections
 		.map((s, idx) => {
 			const tone = s.tone && s.tone !== "plain" ? ` tone-${s.tone}` : "";

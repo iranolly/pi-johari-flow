@@ -351,6 +351,53 @@ const firstLine = (s) => String(s).split("\n")[0];
 			h.text(shotPage).includes("已生成"),
 	);
 
+	// bare paths in the copy: a link when the file exists, code when it does not
+	mkdirSync(join(WORK, "notes"), { recursive: true });
+	writeFileSync(join(WORK, "notes", "evidence.html"), "<html>ok</html>");
+	const siblingDir = join(WORK, ".pi/flow/linktest");
+	mkdirSync(siblingDir, { recursive: true });
+	writeFileSync(join(siblingDir, "05-report.html"), "<html>ok</html>");
+	const linkHtml = renderPage(
+		{
+			kind: "report",
+			title: "链接",
+			sections: [
+				{
+					heading: "证据",
+					body: "看实拍 (notes/evidence.html) · 旧报告 (05-report.html) · 不存在的 (notes/none.html)",
+				},
+			],
+		},
+		{ phase: "测试", cwd: WORK, sessionId: "s", dir: siblingDir },
+	);
+	const links = linkHtml.match(/<a class="pathlink" href="([^"]+)"/g) ?? [];
+	check(
+		"D2j existing paths become file links",
+		links.length === 2 &&
+			links.every((l) => l.includes("href=\"file://")) &&
+			linkHtml.includes("notes/evidence.html</a>") &&
+			linkHtml.includes("05-report.html</a>"),
+		`${links.length} links`,
+	);
+	check(
+		"D2k a missing path stays code",
+		linkHtml.includes('<code class="path">notes/none.html</code>'),
+	);
+	const urlHtml = renderPage(
+		{
+			kind: "report",
+			title: "网址",
+			sections: [{ heading: "u", body: "看 https://example.com/a 与 [文档](https://example.com/b)。" }],
+		},
+		{ phase: "测试", cwd: WORK, sessionId: "s" },
+	);
+	const urlAnchors = urlHtml.match(/<a [^>]*href="https:\/\/example\.com\/[ab]"/g) ?? [];
+	check(
+		"D2l bare urls become links, markdown links stay single",
+		urlAnchors.length === 2 && !/<a [^>]*<a /.test(urlHtml),
+		`${urlAnchors.length} anchors`,
+	);
+
 	// a page must hand the caller an address and must not grab a browser window
 	const execBefore = h.exec.length;
 	const linked = await h.page({ kind: "report", title: "地址测试", sections: [], open: false });

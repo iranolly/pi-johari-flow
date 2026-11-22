@@ -752,7 +752,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.7";
+const PKG_VERSION = "0.1.8";
 
 /* --------------------------------------------------------------------- init */
 
@@ -1136,6 +1136,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 				sessionId: sessionSlug(ctx),
 				project: basename(ctx.cwd),
 				version: PKG_VERSION,
+				dir,
 			});
 			let absPath: string;
 			try {
@@ -1257,6 +1258,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 					sessionId: sessionSlug(ctx),
 					project: basename(ctx.cwd),
 					version: PKG_VERSION,
+					dir,
 				});
 				try {
 					const absPath = await writePage(dir, "decision", html);
