@@ -35,7 +35,6 @@ import {
 } from "./types.ts";
 
 const ENTRY_TYPE = "johari-flow";
-const SELFCHECK_ENTRY_TYPE = "johari-selfcheck";
 const STATUS_KEY = "johari";
 
 const PHASE_CN: Record<Phase, string> = {
@@ -259,10 +258,6 @@ const JohariSchema = Type.Object({
 /* -------------------------------------------------------------------- state */
 
 let state: FlowState = initialState();
-/** Follow-up nudges per self-check miss; capped so a stubborn turn cannot loop. */
-let selfCheckNags = 0;
-/** Self-check verdict waiting for the turn to finish before it is written down. */
-let pendingSelfCheck: Record<string, unknown> | null = null;
 
 function nowIso(): string {
 	return new Date().toISOString();
@@ -716,7 +711,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.4";
+const PKG_VERSION = "0.1.5";
 
 /* --------------------------------------------------------------------- init */
 
@@ -724,7 +719,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 	/* ------------------------------------------------------------- lifecycle */
 
 	pi.on("session_start", async (_event, ctx) => {
-		selfCheckNags = 0;
 		reconstruct(ctx);
 		try {
 			ctx.ui.setStatus(STATUS_KEY, phaseBadge(state));
@@ -879,7 +873,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 						);
 					}
 					state.intentConfirmed = true;
-					selfCheckNags = 0;
 					state.decisions.push({
 						question: "意图理解是否正确？",
 						answer: String(params.reason ?? "").trim() || "用户确认无误",
@@ -949,7 +942,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 						label,
 						at: nowIso(),
 					};
-					selfCheckNags = 0;
 					const fromApprove = state.phase;
 					state.phase = "approved";
 					state.decisions.push({
@@ -1009,7 +1001,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 						delete state.approval;
 					}
 					if (to === "intent") state.intentConfirmed = false;
-					selfCheckNags = 0;
 					state.phase = to;
 					state.history.push({
 						from,
@@ -1023,7 +1014,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 				case "abort": {
 					const from = state.phase;
 					state = initialState();
-					selfCheckNags = 0;
 					persist(pi, ctx);
 					return reply(`流程已终止（${PHASE_CN[from]} → 空闲）。`);
 				}
@@ -1376,7 +1366,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 			if (head === "abort") {
 				const from = state.phase;
 				state = initialState();
-				selfCheckNags = 0;
 				persist(pi, ctx);
 				ctx.ui.notify(`流程已终止（${PHASE_CN[from]} → 空闲）`, "info");
 				return;

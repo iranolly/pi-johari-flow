@@ -4,6 +4,28 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.1.5] — 2026-11-22
+
+Cleanup requested after a reported nudge loop: the self-check code itself, not just its wiring,
+is gone.
+
+### Removed
+
+- `extensions/johari-flow/johari.ts` deleted (SELF_CHECK_* constants, `checkSelfCheck`,
+  `describeSelfCheckGap`, `renderSelfCheckMarker`, `selfCheckTemplate`, `selfCheckRules`).
+- `selfCheckNags`, `pendingSelfCheck`, `SELFCHECK_ENTRY_TYPE` and their six reset sites removed
+  from `index.ts`.
+
+### Note
+
+Behaviour is unchanged from 0.1.4 — 0.1.4 already stopped nudging; this release removes the dead
+code so no lookup can find a self-check path. A running host that loaded 0.1.3 keeps the old hook
+in memory until it is restarted, not just reloaded in an existing session tree.
+
+### Tests
+
+- 76 checks, unchanged.
+
 ## [0.1.4] — 2026-11-22
 
 User request: drop the eight-line self-check that every reply had to end with.
