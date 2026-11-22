@@ -239,11 +239,16 @@ const firstLine = (s) => String(s).split("\n")[0];
 	check("D0b done needs a report first", early.includes("报告") && !early.includes("已推进"), early.slice(0, 60));
 
 	// many pages requested in the same turn must each land in their own file
-	const countReports = () =>
+	const flowFiles = (suffix) =>
 		readdirSync(join(WORK, ".pi/flow")).flatMap((s) =>
-			readdirSync(join(WORK, ".pi/flow", s)).filter((f) => f.endsWith("-report.html")),
-		).length;
+			readdirSync(join(WORK, ".pi/flow", s))
+				.filter((f) => f.endsWith(suffix))
+				.map((f) => join(WORK, ".pi/flow", s, f)),
+		);
+	const countReports = () => flowFiles("-report.html").length;
+	const countRecords = () => flowFiles("-report.json").length;
 	const before = countReports();
+	const beforeRecords = countRecords();
 	await Promise.all(
 		Array.from({ length: 12 }, (_, i) =>
 			h.page({ kind: "report", title: `并排${i}`, sections: [], open: false }),
@@ -251,6 +256,21 @@ const firstLine = (s) => String(s).split("\n")[0];
 	);
 	const grown = countReports() - before;
 	check("D1 concurrent pages never overwrite", grown === 12, "grew by " + grown);
+	const grownRecords = countRecords() - beforeRecords;
+	check("D1b every page writes a sibling json record", grownRecords === 12, "grew by " + grownRecords);
+
+	const recordFile = flowFiles("-report.json").sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+	let record = null;
+	try {
+		record = JSON.parse(readFileSync(recordFile, "utf8"));
+	} catch {
+		record = null;
+	}
+	check(
+		"D1c record keeps kind, phase, version and the full spec",
+		Boolean(record && record.kind === "report" && record.phase && record.version && record.spec?.title),
+		record ? Object.keys(record).join(",") : "no record",
+	);
 
 	const unknown = await h.page({
 		kind: "report",
@@ -261,12 +281,23 @@ const firstLine = (s) => String(s).split("\n")[0];
 	check("D2 unknown block is visible", h.text(unknown).includes("已生成"));
 	const unknownPage = readdirSync(join(WORK, ".pi/flow"))
 		.flatMap((s) => readdirSync(join(WORK, ".pi/flow", s)).map((f) => join(WORK, ".pi/flow", s, f)))
+		.filter((f) => f.endsWith(".html"))
 		.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 	const unknownHtml = readFileSync(unknownPage, "utf8");
 	check(
 		"D2b unknown block warns on the page",
 		unknownHtml.includes("未知的展示块") && unknownHtml.includes("sparkline"),
 	);
+
+	// a page must hand the caller an address and must not grab a browser window
+	const execBefore = h.exec.length;
+	const linked = await h.page({ kind: "report", title: "地址测试", sections: [], open: false });
+	check(
+		"D2c page returns a file url",
+		String(linked?.details?.url ?? "").startsWith("file://"),
+		String(linked?.details?.url ?? ""),
+	);
+	check("D2d default does not launch a browser", h.exec.length === execBefore, `exec: ${h.exec.length - execBefore}`);
 
 	// css override is model-authored: it must never close the style element
 	const html = renderPage(

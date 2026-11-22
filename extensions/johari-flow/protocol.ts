@@ -26,7 +26,7 @@ const PHASE_DUTY: Record<Phase, string> = {
 		"本阶段**禁止**写代码、禁止改文件、禁止派发执行类 sub agent。",
 		"要做的事：",
 		"1. 用 `flow_page {kind:\"intent\"}` 生成意图确认页（复述 + 假设 + 不在范围内 + 风险 + 待确认项）。",
-		"2. 页面打开后，用一句话说明「请确认或修正」，然后**停下等待**用户回答。",
+		"2. 把该页面的打开地址原样贴给用户（页面默认不自动打开），请他确认或修正，然后**停下等待**回答。",
 		"3. 用户确认后调用 `flow_plan {action:\"confirm\"}`，再 `flow_plan {action:\"advance\", to:\"research\"}`。",
 		"4. 用户修正意图时用 `flow_plan {action:\"setGoal\", goal:\"<修正后原话>\"}`：它会改写 `state.goal`、作废已有确认并退回 intent；旧 goal 已写在 history 里，不要自己替用户拍板。",
 	].join("\n"),
@@ -113,7 +113,7 @@ export function buildProtocol(state: FlowState, dispatch: string[] = []): string
 		johariRules(),
 		"",
 		"### 工具契约",
-		"- `flow_page` 生成 HTML 展示页（intent / decision / report）。生成后必须告诉用户「页面已打开，请确认」。",
+		"- `flow_page` 生成 HTML 展示页（intent / decision / report），并在同目录写一份同名 `.json` 配置记录。默认**不**打开浏览器：把返回的打开地址原样贴给用户。",
 		"- `flow_ask` 向用户提一个决策问题（终端选择 + 可附 HTML 简报），会阻塞直到用户回答。",
 		"- `flow_plan` 推进/查看/终止流程。**不要**在没完成本阶段职责时推进。",
 		"- 派发 sub agent：" +

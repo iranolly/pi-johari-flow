@@ -66,7 +66,7 @@ idle → intent → research → design → review → approved → execute → 
 
 `johari` 面板四栏都要填。确认页只有**一个**决策（这理解对不对），所以用 `options` 给「确认无误 / 需要修正 / 我补充一下」，并包含一个「先别动」项。
 
-页面打开后：一句话请用户确认，**停下**。不要在同一轮继续调研。
+页面生成后：把工具返回的打开地址贴给用户（默认不自动打开浏览器），一句话请用户确认，**停下**。不要在同一轮继续调研。
 用户修正 → `flow_plan {action:"setGoal", goal:"<修正后的原话>"}`（回 intent 且需重新确认）重出页面，不要自己替用户拍板。
 用户确认 → `flow_plan {action:"confirm", reason:"<用户原话>"}`，再 `advance to="research"`。
 
@@ -214,6 +214,8 @@ idle → intent → research → design → review → approved → execute → 
 ### 4.4 产物位置
 
 页面落在 `<cwd>/.pi/flow/<session8>/NN-<kind>.html`（`NN` 取目录内最大序号 +1，不覆盖旧页），纯静态、无网络依赖、可直接打印。
+
+每次生成页面都会在同目录写一份同名 `.json` 配置记录（`NN-<kind>.json`）：完整参数、阶段、工作目录、版本、生成时间、是否自动打开。要复盘或重生成就查它，不要从 HTML 反推。默认**不**打开浏览器，把地址贴给用户即可。
 
 ## 5. 常用命令
 

@@ -4,6 +4,29 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.1.6] — 2026-11-22
+
+Two requests from the user: keep a record of every page, and stop opening browsers.
+
+### Added
+
+- **Every page writes a sibling `.json` record** (`NN-<kind>.json`) next to the HTML: the full
+  spec, phase, kind, title, cwd, package version, timestamp and whether it was opened. A failed
+  record never blocks the page — it raises a warning and the page still lands.
+
+### Changed
+
+- **Pages are closed by default.** `flow_page` now opens a browser only with `open:true`; the
+  reply carries the `file://` address (plus the record path) so the model hands the link to the
+  user instead of stealing focus. The decision page built by `flow_ask` behaves the same and
+  announces its address through a notification before the picker blocks the turn.
+- Protocol, skill and README updated: "tell the user the page opened" became "paste the address".
+
+### Tests
+
+- 80 checks (was 76): D1b records grow with pages, D1c a record keeps kind/phase/version/spec,
+  D2c the reply returns a `file://` url, D2d the default launches no browser.
+
 ## [0.1.5] — 2026-11-22
 
 Cleanup requested after a reported nudge loop: the self-check code itself, not just its wiring,

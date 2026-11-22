@@ -33,7 +33,8 @@ pick a design, and every phase has to leave evidence behind.
 /flow start 把登录页改成手机号 + 验证码登录
 ```
 
-The agent opens an intent page (`.pi/flow/<session>/01-intent.html`), waits for your answer,
+The agent writes an intent page (`.pi/flow/<session>/01-intent.html`) and hands you its `file://`
+address in the chat instead of stealing focus with a browser window. It waits for your answer,
 then researches, designs, cross-reviews, and only after you approve does it touch code.
 The full browser-driven version: run `/flow start <goal>` and follow the pages.
 
@@ -41,7 +42,7 @@ The full browser-driven version: run `/flow start <goal>` and follow the pages.
 
 | Phase | What the agent does | What is blocked |
 | --- | --- | --- |
-| ① intent | mines your goal, opens a confirmation page | project code writes and shell writes; sub-agent dispatch (pages and notes under `.pi/` stay writable) |
+| ① intent | mines your goal, writes a confirmation page | project code writes and shell writes; sub-agent dispatch (pages and notes under `.pi/` stay writable) |
 | ② research | read-only fact gathering, each claim carries evidence | project code writes, shell mutations, destructive commands |
 | ③ design | ≥2 options with cost and rollback | same as above |
 | ④ review | cross review from different angles | same as above |
@@ -65,12 +66,16 @@ can only be produced in `execute` or `report`.
 | `/flow` | `status` · `start <goal>` · `approve` · `report` · `abort` |
 
 `setGoal` re-opens the intent phase (goal changes void the old confirmation). It is refused
-after approval — go back to `design` first. `flow_ask` needs at least two options; `flow_page`
-takes `open:false` to write a page without launching a browser.
+after approval — go back to `design` first. `flow_ask` needs at least two options. `flow_page` does
+**not** open a browser by default: it returns a `file://` address you can hand to the user, and only
+`open:true` launches one.
 
 ## The pages
 
-Pages are plain HTML written to `.pi/flow/<session>/` and opened in your browser. They carry a
+Pages are plain HTML written to `.pi/flow/<session>/`; the chat gets a `file://` address and the
+browser stays closed unless you ask. Next to every page sits a `NN-<kind>.json` record holding the
+exact spec, phase, cwd, version and timestamp it was rendered from — the HTML is the output, the
+JSON is the input you can audit or re-render. Pages carry a
 four-quadrant panel (open / blind / hidden / unknown) so you can see what is *assumed*. Decision
 pages are a list of **independent single-choice questions** — never one bundled pick — and each
 choice copies a paste-ready receipt back into the chat.
@@ -149,7 +154,7 @@ Add `.pi/` to your `.gitignore` if you do not want the generated pages in versio
 ## Development
 
 ```bash
-npm test        # 76 checks, no dependencies: node --experimental-strip-types tests/run.mjs
+npm test        # 80 checks, no dependencies: node --experimental-strip-types tests/run.mjs
 ```
 
 The suite links the three host packages Pi already ships and drives the extension through the

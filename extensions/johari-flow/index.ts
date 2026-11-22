@@ -22,6 +22,7 @@ import { Type } from "typebox";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { type PageQuestion, type PageSection, type PageSpec, renderPage } from "./html.ts";
 import { buildProtocol, phaseBadge } from "./protocol.ts";
 import {
@@ -686,6 +687,32 @@ async function writePage(dir: string, kind: string, html: string): Promise<strin
 	throw new Error(`页面写入失败：${dir} 下连续 20 次文件名冲突`);
 }
 
+/**
+ * Every page gets a sibling `.json` record: the exact spec, phase and cwd it was
+ * rendered from. The HTML alone cannot be audited or re-generated field by field.
+ */
+async function writePageRecord(
+	ctx: ExtensionContext,
+	absPath: string,
+	record: Record<string, unknown>,
+): Promise<string | null> {
+	const target = absPath.replace(/\.html$/, ".json");
+	try {
+		await writeFile(target, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+		return target;
+	} catch (err) {
+		try {
+			ctx.ui.notify(
+				`页面配置记录没写成（页面本身正常）：${err instanceof Error ? err.message : String(err)}`,
+				"warning",
+			);
+		} catch {
+			/* no UI: the page itself is still on disk */
+		}
+		return null;
+	}
+}
+
 /** Next free page number: the directory is the source of truth, not pageSeq. */
 async function nextPageSeq(dir: string): Promise<number> {
 	try {
@@ -711,7 +738,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.5";
+const PKG_VERSION = "0.1.6";
 
 /* --------------------------------------------------------------------- init */
 
@@ -853,13 +880,14 @@ export default function johariFlow(pi: ExtensionAPI) {
 						return reply("action=start 需要 goal：把用户的原话逐字放进来，不要改写。");
 					}
 					state = initialState(goal);
-					persist(pi, ctx);					return reply(
+					persist(pi, ctx);
+					return reply(
 						[
 							`流程已开始 · ${PHASE_CN[state.phase]}`,
 							"",
 							"下一步（本阶段硬性要求）：",
 							"1. 调用 `flow_page {kind:\"intent\"}` 出意图确认页：复述、假设、不在范围内、风险、待确认项。",
-							"2. 告诉用户「页面已打开，请确认或修正」，然后停下等待。",
+							"2. 把工具返回的「打开地址」原样贴给用户，请他打开页面确认或修正，然后停下等待。",
 							"3. 用户确认后 `flow_plan {action:\"confirm\"}`，再 `flow_plan {action:\"advance\", to:\"research\"}`。",
 						].join("\n"),
 					);
@@ -1058,7 +1086,12 @@ export default function johariFlow(pi: ExtensionAPI) {
 				}),
 			),
 			johari: Type.Optional(JohariSchema),
-			open: Type.Optional(Type.Boolean({ description: "是否自动打开浏览器，默认 true" })),
+			open: Type.Optional(
+				Type.Boolean({
+					description:
+						"是否顺便在浏览器打开，默认 false（不打开）：默认做法是把页面地址贴给用户，由他自己打开",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (params.kind === "report" && state.phase !== "execute" && state.phase !== "report") {
@@ -1104,6 +1137,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 			state.pageSeq = Number.parseInt(fileName, 10) || state.pageSeq;
 
 			const relPath = join(".pi", "flow", sessionSlug(ctx), fileName).replace(/\\/g, "/");
+			const relRecord = relPath.replace(/\.html$/, ".json");
 			state.artifacts.push({
 				kind: params.kind,
 				title: params.title,
@@ -1113,25 +1147,42 @@ export default function johariFlow(pi: ExtensionAPI) {
 			});
 			persist(pi, ctx);
 
+			const wroteRecord = await writePageRecord(ctx, absPath, {
+				version: PKG_VERSION,
+				at: nowIso(),
+				phase: state.phase,
+				kind: params.kind,
+				title: params.title,
+				page: relPath,
+				cwd: ctx.cwd,
+				opened: params.open === true,
+				spec,
+			});
+
+			// Pages stay closed unless the caller asks: the link is handed to the
+			// user in the reply instead of a browser window taking focus.
 			let opened = false;
-			if (params.open !== false && ctx.hasUI) opened = await openInBrowser(pi, absPath);
+			if (params.open === true && ctx.hasUI) opened = await openInBrowser(pi, absPath);
 			try {
-				ctx.ui.notify(opened ? `已打开 ${params.kind} 页面` : `页面已生成：${relPath}`, "info");
+				ctx.ui.notify(`页面已生成：${relPath}`, "info");
 			} catch {
 				/* cosmetic */
 			}
 
 			return reply(
 				[
-					`已生成 ${params.kind} 页面：\`${relPath}\`${opened ? "（已在浏览器打开）" : "（未能自动打开，请手动打开）"}`,
+					`已生成 ${params.kind} 页面：\`${relPath}\``,
+					`打开地址（原样贴给用户，不要改写）：${pathToFileURL(absPath).href}`,
+					wroteRecord ? `配置记录：\`${relRecord}\`` : "配置记录：没写成（页面本身正常）",
+					opened ? "（本次按 open:true 已自动打开）" : "（默认不自动打开）",
 					"",
 					plainSummary(spec),
 					"",
 					"---",
-					"**接下来必须做的一件事**：用一句话请用户确认/选择（页面里的选项点击即复制回执），然后 **停下等待**。",
+					"**接下来必须做的一件事**：把「打开地址」贴给用户，请他打开页面确认/选择（选项点击即复制回执），然后 **停下等待**。",
 					"不要在同一轮里继续推进阶段。",
 				].join("\n"),
-				{ page: relPath },
+				{ page: relPath, record: relRecord, url: pathToFileURL(absPath).href },
 			);
 		},
 	});
@@ -1165,6 +1216,8 @@ export default function johariFlow(pi: ExtensionAPI) {
 				);
 			}
 
+			let pageUrl = "";
+			let pageRecord = "";
 			if (params.page !== false) {
 				const dir = resolve(ctx.cwd, ".pi", "flow", sessionSlug(ctx));
 				const spec: PageSpec = {
@@ -1194,14 +1247,33 @@ export default function johariFlow(pi: ExtensionAPI) {
 					const absPath = await writePage(dir, "decision", html);
 					const fileName = absPath.split(/[\\/]/).pop() ?? "";
 					state.pageSeq = Number.parseInt(fileName, 10) || state.pageSeq;
+					const relPath = join(".pi", "flow", sessionSlug(ctx), fileName).replace(/\\/g, "/");
+					const relRecord = relPath.replace(/\.html$/, ".json");
 					state.artifacts.push({
 						kind: "decision",
 						title: params.question,
-						path: join(".pi", "flow", sessionSlug(ctx), fileName).replace(/\\/g, "/"),
+						path: relPath,
 						at: nowIso(),
 					});
-					// A batch run (-p / json) has nobody looking at a browser tab: skip it.
-					if (ctx.hasUI) await openInBrowser(pi, absPath);
+					pageUrl = pathToFileURL(absPath).href;
+					const rec = await writePageRecord(ctx, absPath, {
+						version: PKG_VERSION,
+						at: nowIso(),
+						phase: state.phase,
+						kind: "decision",
+						title: params.question,
+						page: relPath,
+						cwd: ctx.cwd,
+						opened: false,
+						spec,
+					});
+					if (rec) pageRecord = relRecord;
+					// The picker below blocks the turn, so the link has to surface now.
+					try {
+						ctx.ui.notify(`决策页：${pageUrl}`, "info");
+					} catch {
+						/* cosmetic */
+					}
 				} catch (err) {
 					// The question matters more than the page: report the failure, then ask anyway.
 					try {
@@ -1270,6 +1342,8 @@ export default function johariFlow(pi: ExtensionAPI) {
 				[
 					`用户已选择：**${picked.id}) ${picked.label}**`,
 					picked.detail ? `含义：${picked.detail}` : "",
+					pageUrl ? `决策页地址（默认不打开，需要时贴给用户）：${pageUrl}` : "",
+					pageRecord ? `配置记录：\`${pageRecord}\`` : "",
 					"",
 					"下一步：按这个选择继续。若它改变了已批准方案的边界，先更新决策页再动手。",
 				]
