@@ -192,6 +192,7 @@ idle → intent → research → design → review → approved → execute → 
 | `sequence` | 泳道时序图（参与者竖线 + 来往箭头，虚线=回复） | **多方按顺序来往**：谁先跟谁说、派活与回报 |
 | `graph` | 圆形布局关系网（节点 + 带标签的连线） | **相互依赖/关联**：谁依赖谁、影响面、耦合 |
 | `state` | 单行状态 + 箭头 + 上弧回跳 | **状态与跳转**：一台机器的几种状态、跳转条件 |
+| `image` | 真图网格（多张自动排两列，点击放大） | **必须亲眼看的东西**：截图、前后对比、报错画面 |
 
 写法要点：
 
@@ -203,7 +204,8 @@ idle → intent → research → design → review → approved → execute → 
 - `tone` 选 `facts` / `assumptions` / `unknowns` / `risks` / `deliverables` 会给标题竖条换色，别全用 `plain`。
 - 五种结构图（`tree`/`branch`/`sequence`/`graph`/`state`）都用**扁平列表 + `parent` 指向**，不要写嵌套结构：`tree`/`branch` 用 `items[{id,parent?,label,note?,cond?}]`；`sequence` 用 `actors[]` + `messages[{from,to,text?,style?}]`（`style:"dashed"` 表示回复/异步，`from===to` 画自调用）；`graph` 用 `nodes[{id,label,kind?}]` + `edges[{from,to,label?}]`；`state` 用 `states[{id,label,kind?:"start"|"plain"|"end"}]` + `transitions[{from,to,label?}]`（相邻向右画直线，其他画上弧）。
 - 页面只有出场动画（淡入/条形生长/回环旋转），**没有步进播放**，所以别规划「点一下看下一步」的叙事；一屏内要能读完。
-- 默认版式**确实放不下**时才传 `css`（整页自定义样式，追加在默认样式之后并可覆盖）；能用现有 13 种块解决就别写样式。
+- 默认版式**确实放不下**时才传 `css`（整页自定义样式，追加在默认样式之后并可覆盖）；能用现有 14 种块解决就别写样式。
+- 要放图就用 `image` 块：`images[{src,caption?,alt?}]`，`src` 写**本地文件路径**（相对项目根目录或绝对路径），页面会把图直接嵌进 HTML，所以页面离线也能看。远程 `http(s)` 图会被拒绝（会泄露「这页被人看过」）；先下载到本地再引用。单张 ≤6MB、整页 ≤24MB，超了会在图上位置显示一行黄色提示，不会静默变空白。一行纯文本 `![说明](路径)` 放在 `body` 里也会变成同样的图。
 
 ### 4.3 决策与选项
 

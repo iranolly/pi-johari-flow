@@ -8,8 +8,12 @@
  *
  * Everything is local and offline: no CDNs, no fonts, no network. Option rows
  * copy a paste-ready receipt to the clipboard, so a `file://` page can still
- * answer back into Pi without a server.
+ * answer back into Pi without a server. Screenshots are read from disk and
+ * inlined as data URIs for the same reason — one file, nothing fetched.
  */
+
+import { readFileSync, statSync } from "node:fs";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 
 export type Tone = "plain" | "facts" | "assumptions" | "unknowns" | "risks" | "deliverables";
 
@@ -68,7 +72,16 @@ export type Block =
 	/** Dependency/relationship net drawn on a circle. */
 	| { kind: "graph"; nodes: Array<GraphNode>; edges: Array<GraphEdge> }
 	/** State machine: states plus labeled transitions. */
-	| { kind: "state"; states: Array<StateNode>; transitions: Array<StateTransition> };
+	| { kind: "state"; states: Array<StateNode>; transitions: Array<StateTransition> }
+	/** Screenshots from local files, inlined as data URIs so the page stays one offline file. */
+	| { kind: "image"; images: Array<Shot>; caption?: string };
+
+export interface Shot {
+	/** Local path (relative to the project root, or absolute). Remote URLs are refused. */
+	src: string;
+	caption?: string;
+	alt?: string;
+}
 
 export interface TreeNode {
 	id: string;
@@ -192,8 +205,110 @@ function inline(s: string): string {
 	return out;
 }
 
+/* ------------------------------------------------------------------ images */
+
+const IMG_MAX_BYTES = 6 * 1024 * 1024;
+const IMG_MAX_TOTAL = 24 * 1024 * 1024;
+
+/** Remaining inline budget for one page, shared by every image block on it. */
+export interface ImageBudget {
+	left: number;
+}
+
+function humanBytes(bytes: number): string {
+	return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+/** Magic bytes beat the extension: a renamed file must still produce a working <img>. */
+function sniffMime(buf: Buffer): string | null {
+	if (buf.length >= 8 && buf.readUInt32BE(0) === 0x89504e47) return "image/png";
+	if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+	if (buf.length >= 6 && buf.subarray(0, 3).toString("latin1") === "GIF") return "image/gif";
+	if (
+		buf.length >= 12 &&
+		buf.subarray(0, 4).toString("latin1") === "RIFF" &&
+		buf.subarray(8, 12).toString("latin1") === "WEBP"
+	)
+		return "image/webp";
+	if (buf.length >= 2 && buf.subarray(0, 2).toString("latin1") === "BM") return "image/bmp";
+	const head = buf.subarray(0, 400).toString("utf8").trimStart();
+	if (/^(?:<\?xml[^>]*>\s*)?<svg[\s>]/i.test(head)) return "image/svg+xml";
+	return null;
+}
+
+type InlineImage = { ok: true; href: string } | { ok: false; reason: string };
+
+/**
+ * A local file becomes a data URI: the page stays one self-contained file that
+ * works from `file://`, from a moved folder, and from a mail attachment. Remote
+ * URLs are refused on purpose — fetching one would leak that the page was read.
+ */
+export function inlineImage(rawSrc: string, base: string, budget: ImageBudget): InlineImage {
+	const src = String(rawSrc ?? "").trim();
+	if (!src) return { ok: false, reason: "图片地址是空的" };
+	if (/^data:image\//i.test(src)) {
+		return src.length > IMG_MAX_BYTES * 1.4
+			? { ok: false, reason: `内联图片过大（约 ${humanBytes(src.length)}）` }
+			: { ok: true, href: src };
+	}
+	if (/^(?:https?:)?\/\//i.test(src)) return { ok: false, reason: `远程图片不嵌入（只收本地文件）：${src}` };
+
+	let file = src.replace(/^file:\/\/\/?/i, "");
+	try {
+		file = decodeURIComponent(file);
+	} catch {
+		/* keep the raw path */
+	}
+	const abs = isAbsolute(file) ? file : resolvePath(base, file);
+
+	let buf: Buffer;
+	try {
+		const st = statSync(abs);
+		if (!st.isFile()) return { ok: false, reason: `不是文件：${file}` };
+		if (st.size > IMG_MAX_BYTES)
+			return { ok: false, reason: `图片太大（${humanBytes(st.size)}，单张上限 ${humanBytes(IMG_MAX_BYTES)}）：${file}` };
+		buf = readFileSync(abs);
+	} catch {
+		return { ok: false, reason: `找不到这张图：${file}` };
+	}
+
+	const mime = sniffMime(buf);
+	if (!mime) return { ok: false, reason: `不像图片（png / jpg / gif / webp / bmp / svg）：${file}` };
+	if (buf.length > budget.left) return { ok: false, reason: `本页图片总量已到上限，这张没放进去：${file}` };
+	budget.left -= buf.length;
+	return { ok: true, href: `data:${mime};base64,${buf.toString("base64")}` };
+}
+
+/** Image grid + readable warnings for the ones that could not be inlined. */
+function renderShots(images: Shot[], base: string, budget: ImageBudget, caption?: string): string {
+	const misses: string[] = [];
+	const figs = images
+		.map((img) => {
+			const inlined = inlineImage(img.src, base, budget);
+			if (!inlined.ok) {
+				misses.push(inlined.reason);
+				return "";
+			}
+			const alt = img.alt ?? img.caption ?? img.src.split(/[\\/]/).pop() ?? "图片";
+			const cap = img.caption ? `<figcaption>${inline(img.caption)}</figcaption>` : "";
+			return `<figure class="shot"><img src="${inlined.href}" alt="${esc(alt)}" decoding="async">${cap}</figure>`;
+		})
+		.filter(Boolean);
+
+	if (!figs.length) {
+		return `<div class="blk callout warn"><div class="ct">图片没有嵌进来</div><div class="cx">${esc(misses.join("；") || "没有传图片")}</div></div>`;
+	}
+	const grid = figs.length === 1 ? " single" : "";
+	const group = caption ? `<div class="shotcap">${inline(caption)}</div>` : "";
+	const warn = misses.length ? `<div class="shotmiss">${misses.map((m) => `<div>未嵌入：${esc(m)}</div>`).join("")}</div>` : "";
+	return `<div class="blk shots${grid}">${figs.join("")}${group}</div>${warn}`;
+}
+
+/** A line that is nothing but `![alt](path)` becomes a figure instead of a paragraph. */
+const MD_IMAGE_RE = /^\s*!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?\s*\)\s*$/;
+
 /** Tiny Markdown subset: headings, lists, tables, fences, quotes, paragraphs. */
-export function mdToHtml(src: string): string {
+export function mdToHtml(src: string, base = process.cwd(), budget: ImageBudget = { left: IMG_MAX_TOTAL }): string {
 	const lines = src.replace(/\r\n/g, "\n").split("\n");
 	const out: string[] = [];
 	let list: "ul" | "ol" | null = null;
@@ -229,6 +344,12 @@ export function mdToHtml(src: string): string {
 		}
 		if (!line.trim()) {
 			flush();
+			continue;
+		}
+		const img = line.match(MD_IMAGE_RE);
+		if (img) {
+			flush();
+			out.push(renderShots([{ src: img[2], alt: img[1] || undefined, caption: img[1] || undefined }], base, budget));
 			continue;
 		}
 		const h = line.match(/^(#{1,6})\s+(.*)$/);
@@ -633,6 +754,18 @@ footer{
   border-radius:5px;padding:7px 13px;cursor:pointer;transition:.13s
 }
 .btn:hover{border-color:var(--accent-dim);color:var(--accent)}
+/* screenshots: inlined as data URIs, tiled two-up, click for full size */
+.shots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.shots.single{grid-template-columns:1fr}
+.shot{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.shot img{display:block;width:100%;height:auto;max-height:76vh;object-fit:contain;background:#08090c;cursor:zoom-in}
+.shot figcaption{padding:9px 12px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--fg-mute)}
+.shotcap{margin-top:9px;font-size:12.5px;color:var(--fg-mute);line-height:1.6}
+.shotmiss{margin:-8px 0 20px;padding:10px 13px;border:1px dashed color-mix(in oklab,var(--blind) 50%,var(--line));border-radius:8px;font-size:12.5px;line-height:1.6;color:var(--fg-dim)}
+#zoom{position:fixed;inset:0;z-index:80;display:none;padding:20px;background:rgba(6,7,10,.95);overflow:auto;cursor:zoom-out}
+#zoom.on{display:block}
+#zoom img{display:block;margin:0 auto;max-width:none;width:auto;height:auto}
+@media print{.shot img{max-height:none}}
 #toast{
   position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);opacity:0;pointer-events:none;
   background:var(--accent);color:#120d02;font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;
@@ -644,6 +777,7 @@ footer{
   section{grid-template-columns:1fr;gap:10px;padding:28px 0}
   .num{border:0;padding:0}
   header.hero{padding:40px 0 28px}
+  .shots{grid-template-columns:1fr}
 }
 @media print{
   body{background:#fff;color:#111}
@@ -989,7 +1123,7 @@ function renderState(states: StateNode[], transitions: StateTransition[]): strin
 	return `<div class="blk fig"><svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img"><defs><marker id="${arrowId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-mute)"/></marker></defs>${lines}${boxes}</svg></div>`;
 }
 
-function renderBlock(b: Block): string {
+function renderBlock(b: Block, ctx: RenderCtx): string {
 	switch (b.kind) {
 		case "flow": {
 			const steps = (b.steps ?? [])
@@ -1075,28 +1209,38 @@ function renderBlock(b: Block): string {
 			return renderGraph(b.nodes ?? [], b.edges ?? []);
 		case "state":
 			return renderState(b.states ?? [], b.transitions ?? []);
+		case "image":
+			return renderShots(b.images ?? [], ctx.base, ctx.budget, b.caption);
 		default:
 			// A misspelled kind must be visible, never a silently blank page.
-			return `<div class="blk callout warn"><div class="ct">未知的展示块</div><div class="cx">kind = ${esc(String((b as { kind?: string }).kind ?? "(空)"))}。可用：flow / timeline / stats / bars / compare / callout / loop / facts / tree / branch / sequence / graph / state。</div></div>`;
+			return `<div class="blk callout warn"><div class="ct">未知的展示块</div><div class="cx">kind = ${esc(String((b as { kind?: string }).kind ?? "(空)"))}。可用：flow / timeline / stats / bars / compare / callout / loop / facts / tree / branch / sequence / graph / state / image。</div></div>`;
 	}
 }
 
-function renderBlocks(blocks?: Block[]): string {
+interface RenderCtx {
+	base: string;
+	budget: ImageBudget;
+}
+
+function renderBlocks(blocks: Block[] | undefined, ctx: RenderCtx): string {
 	if (!blocks || !blocks.length) return "";
-	return blocks.map(renderBlock).filter(Boolean).join("\n");
+	return blocks.map((b) => renderBlock(b, ctx)).filter(Boolean).join("\n");
 }
 
 export function renderPage(
 	spec: PageSpec,
 	meta: { phase: string; cwd: string; sessionId: string; project?: string; version?: string },
 ): string {
+	// Relative image paths resolve against the project root, and the whole page
+	// shares one byte budget so a dozen screenshots cannot make a 100MB file.
+	const ctx: RenderCtx = { base: meta.cwd || process.cwd(), budget: { left: IMG_MAX_TOTAL } };
 	const sections = spec.sections
 		.map((s, idx) => {
 			const tone = s.tone && s.tone !== "plain" ? ` tone-${s.tone}` : "";
 			const body = [
 				s.lead ? `<p class="lead">${inline(s.lead)}</p>` : "",
-				renderBlocks(s.blocks),
-				s.body ? mdToHtml(s.body) : "",
+				renderBlocks(s.blocks, ctx),
+				s.body ? mdToHtml(s.body, ctx.base, ctx.budget) : "",
 				s.items && s.items.length
 					? `<ul>${s.items.map((i) => `<li>${inline(i)}</li>`).join("")}</ul>`
 					: "",
@@ -1139,7 +1283,7 @@ export function renderPage(
   <header class="hero">
     <div class="kicker">${esc(spec.kicker ?? "Johari window · 开放区优先")}</div>
     <h1>${inline(spec.title)}</h1>
-    ${spec.summary ? `<p class="lede">${mdToHtml(spec.summary).replace(/^<p>|<\/p>$/g, "")}</p>` : ""}
+    ${spec.summary ? `<p class="lede">${mdToHtml(spec.summary, ctx.base, ctx.budget).replace(/^<p>|<\/p>$/g, "")}</p>` : ""}
     ${toc}
   </header>
 
@@ -1188,6 +1332,25 @@ export function renderPage(
   }
   document.querySelectorAll('[data-reply]').forEach(function(el){
     el.addEventListener('click', function(){ copy(el.getAttribute('data-reply')); });
+  });
+
+  // Screenshots are embedded at their natural size: a click opens them unscaled.
+  var zoom = document.createElement('div');
+  zoom.id = 'zoom';
+  zoom.addEventListener('click', function(){
+    zoom.classList.remove('on');
+    while (zoom.firstChild) zoom.removeChild(zoom.firstChild);
+  });
+  document.body.appendChild(zoom);
+  document.querySelectorAll('.shot img').forEach(function(img){
+    img.addEventListener('click', function(){
+      var big = document.createElement('img');
+      big.src = img.getAttribute('src');
+      big.alt = img.getAttribute('alt') || '';
+      zoom.appendChild(big);
+      zoom.classList.add('on');
+      zoom.scrollTop = 0;
+    });
   });
 
   // Per-question single choice: each group is independent (a radio group, not a bundle).

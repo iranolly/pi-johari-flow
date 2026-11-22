@@ -4,6 +4,35 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.1.7] — 2026-11-22
+
+Pages could draw diagrams but never show a picture: there was no image block, and an
+`![alt](path)` line in body text came out as a leftover link.
+
+### Added
+
+- **`image` block.** `{kind:"image", images:[{src, caption?, alt?}], caption?}` lays out 1–4
+  screenshots in a responsive grid; a single image takes the full width, and a click opens it at
+  natural size. `src` is a local path (relative to the project root, or absolute); the file is
+  read and inlined as a `data:` URI, so the page stays one offline file that survives being moved
+  or mailed.
+- **`![alt](path)` on its own line** in `body` / `summary` becomes the same figure.
+- Failures stay visible: a missing file, a non-image, an image over 6MB, a page over 24MB, or a
+  remote `http(s)` URL (refused on purpose — fetching one would leak that the page was opened)
+  each print a warning line where the picture should be, never a blank gap.
+- The `.json` record keeps the original path instead of the base64, so records stay small and
+  auditable.
+
+### Changed
+
+- Protocol, skill and README list 14 carriers now, `image` among them, with the local-path rule
+  spelled out.
+
+### Tests
+
+- 85 checks (was 80): D2e inlining, D2f missing/remote warnings, D2g a renamed text file is
+  refused, D2h the markdown form, D2i the record keeps the path.
+
 ## [0.1.6] — 2026-11-22
 
 Two requests from the user: keep a record of every page, and stop opening browsers.

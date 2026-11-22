@@ -7,7 +7,7 @@
  * already ships with, then everything below drives the extension through the
  * same hooks pi does (fake `pi`, fake `ctx`, fake `sessionManager`).
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureHostModules } from "./host.mjs";
@@ -287,6 +287,68 @@ const firstLine = (s) => String(s).split("\n")[0];
 	check(
 		"D2b unknown block warns on the page",
 		unknownHtml.includes("未知的展示块") && unknownHtml.includes("sparkline"),
+	);
+
+	// images: local files are inlined (page stays one offline file), anything else warns
+	const shots = join(WORK, "shots");
+	mkdirSync(shots, { recursive: true });
+	writeFileSync(
+		join(shots, "ok.png"),
+		Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+			"base64",
+		),
+	);
+	writeFileSync(join(shots, "fake.png"), "this is not an image");
+	const shotHtml = renderPage(
+		{
+			kind: "report",
+			title: "图片",
+			sections: [
+				{ heading: "一张", blocks: [{ kind: "image", images: [{ src: "shots/ok.png", caption: "草地" }] }] },
+				{
+					heading: "坏图",
+					blocks: [
+						{
+							kind: "image",
+							images: [{ src: "shots/missing.png" }, { src: "https://example.test/a.png" }],
+						},
+					],
+				},
+				{ heading: "假图", blocks: [{ kind: "image", images: [{ src: "shots/fake.png" }] }] },
+				{ heading: "markdown", body: "![截图](shots/ok.png)" },
+			],
+		},
+		{ phase: "测试", cwd: WORK, sessionId: "s" },
+	);
+	check(
+		"D2e local image is inlined as a data uri",
+		shotHtml.includes('class="blk shots single"') &&
+			shotHtml.includes("data:image/png;base64,") &&
+			shotHtml.includes("草地"),
+	);
+	check(
+		"D2f missing and remote images warn instead of going blank",
+		shotHtml.includes("图片没有嵌进来") &&
+			shotHtml.includes("远程图片不嵌入") &&
+			!shotHtml.includes('src="https://'),
+	);
+	check("D2g a text file renamed to .png is refused", shotHtml.includes("不像图片"));
+	check("D2h a markdown image line becomes a figure", /<figure class="shot"><img src="data:image\/png/.test(shotHtml));
+
+	const shotPage = await h.page({
+		kind: "report",
+		title: "截图页",
+		sections: [{ heading: "图", blocks: [{ kind: "image", images: [{ src: "shots/ok.png" }] }] }],
+		open: false,
+	});
+	const shotRecordFile = flowFiles("-report.json").sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+	const shotRecord = JSON.parse(readFileSync(shotRecordFile, "utf8"));
+	check(
+		"D2i the record keeps the path, not the base64",
+		shotRecord.spec?.sections?.[0]?.blocks?.[0]?.images?.[0]?.src === "shots/ok.png" &&
+			!JSON.stringify(shotRecord).includes("base64") &&
+			h.text(shotPage).includes("已生成"),
 	);
 
 	// a page must hand the caller an address and must not grab a browser window

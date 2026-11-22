@@ -88,10 +88,11 @@ const BlockSchema = Type.Object({
 			"sequence",
 			"graph",
 			"state",
+			"image",
 		] as const,
 		{
 			description:
-				"视觉载体：flow=步骤链 timeline=时间线 stats=大数字卡 bars=条形对比 compare=左右对照 callout=重点框 loop=循环示意 facts=键值卡 tree=层级地图（代码地图/模块结构，可折叠） branch=分支流程（如果…就…的岔路） sequence=多方顺序（谁跟谁说了什么） graph=关系网（依赖/关联） state=状态机（状态与跳转条件）",
+				"视觉载体：flow=步骤链 timeline=时间线 stats=大数字卡 bars=条形对比 compare=左右对照 callout=重点框 loop=循环示意 facts=键值卡 tree=层级地图（代码地图/模块结构，可折叠） branch=分支流程（如果…就…的岔路） sequence=多方顺序（谁跟谁说了什么） graph=关系网（依赖/关联） state=状态机（状态与跳转条件） image=真图（本地截图内联进页面，点开可放大）",
 		},
 	),
 	steps: Type.Optional(Type.Array(StepSchema, { description: "flow / loop 用" })),
@@ -158,6 +159,19 @@ const BlockSchema = Type.Object({
 			{ description: "state 用：状态跳转与条件" },
 		),
 	),
+	images: Type.Optional(
+		Type.Array(
+			Type.Object({
+				src: Type.String({
+					description:
+						"本地图片路径：相对项目根目录（如 sample-qa/a.png）或绝对路径；远程 http(s) 地址会被拒绝",
+				}),
+				caption: Type.Optional(Type.String({ description: "图下小字；不写就只显示图" })),
+				alt: Type.Optional(Type.String({ description: "读屏用的替代文字，默认取文件名" })),
+			}),
+			{ description: "image 用：一次 1～4 张，多张自动排两列" },
+		),
+	),
 	events: Type.Optional(
 		Type.Array(
 			Type.Object({
@@ -188,7 +202,7 @@ const BlockSchema = Type.Object({
 			}),
 		),
 	),
-	caption: Type.Optional(Type.String()),
+	caption: Type.Optional(Type.String({ description: "bars / image 用：整块的说明，一行" })),
 	left: Type.Optional(
 		Type.Object({ title: Type.String(), items: Type.Array(Type.String()) }),
 	),
@@ -738,7 +752,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.6";
+const PKG_VERSION = "0.1.7";
 
 /* --------------------------------------------------------------------- init */
 
@@ -1064,6 +1078,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 			"Write for someone who never reads code: no code blocks, no file names, no identifiers, no jargon. Say it in plain spoken language.",
 			"One decision per section: give one `lead` sentence and 1-2 blocks; leave `note` inside blocks empty unless the number or picture genuinely cannot carry the point.",
 			"Pick the carrier that matches the shape of the content: hierarchy (code map / module structure) → `tree`; if-then paths → `branch`; who-talks-to-whom in order → `sequence`; what-depends-on-what → `graph`; states and transitions → `state`.",
+			"When the reader must see something for real (screenshot, before/after, failure screen), use a block `{kind:\"image\", images:[{src,caption?}]}` with a local file path — relative to the project root or absolute. It is inlined into the page, so the page still opens offline. Remote http(s) images are refused on purpose; save them locally first.",
 			"Use `css` only when the default layout truly cannot hold the content; it appends to the default stylesheet and overrides it.",
 		],
 		parameters: Type.Object({

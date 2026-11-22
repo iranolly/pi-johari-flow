@@ -100,6 +100,7 @@ the field named below:
 | `sequence` | `actors` + `messages` | who says what to whom, in order |
 | `graph` | `nodes` + `edges` | what depends on what |
 | `state` | `states` + `transitions` | states and jumps between them |
+| `image` | `images` (`src` + `caption`) | screenshots the reader must actually see |
 
 An unknown or misspelled `kind` renders a visible warning card instead of a silent blank spot.
 Report pages are written for people who never read code: no code blocks, no file names.
