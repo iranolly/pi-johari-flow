@@ -23,7 +23,6 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { type PageQuestion, type PageSection, type PageSpec, renderPage } from "./html.ts";
-import { checkSelfCheck, describeSelfCheckGap, selfCheckRules } from "./johari.ts";
 import { buildProtocol, phaseBadge } from "./protocol.ts";
 import {
 	EDGES,
@@ -717,7 +716,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.3";
+const PKG_VERSION = "0.1.4";
 
 /* --------------------------------------------------------------------- init */
 
@@ -748,80 +747,6 @@ export default function johariFlow(pi: ExtensionAPI) {
 			delete sections.johari_flow;
 		}
 	});
-
-	/* ---------------------------------------------------- Johari post-process */
-
-	pi.on("message_end", (event, ctx) => {
-		if (!isActive(state)) return;
-		const msg = event.message as any;
-		if (!msg || msg.role !== "assistant") return;
-		const parts = Array.isArray(msg.content) ? msg.content : [];
-		// Intermediate assistant messages carry tool calls; only finalize user-facing text.
-		if (parts.some((p: any) => p?.type === "toolCall" || p?.type === "tool_call")) return;
-		const text = parts
-			.filter((p: any) => p?.type === "text" && typeof p.text === "string")
-			.map((p: any) => p.text)
-			.join("\n")
-			.trim();
-		if (!text) return;
-
-		const report = checkSelfCheck(text, state.phase);
-		if (report.verdict === "ok") {
-			selfCheckNags = 0;
-			return;
-		}
-
-		// The self-check is the model's own work: nudge it to finish the block, and
-		// record the verdict in a custom entry (not in LLM context). The marker is
-		// never spliced into the assistant message — that would put words the model
-		// never wrote into its own transcript and into every later turn.
-		const gap = describeSelfCheckGap(report);
-		// Recorded on turn_end, never here: appendEntry runs *before* the assistant
-		// message is appended, so writing now would steal the leaf and file the
-		// self-check entry between the question and its answer.
-		pendingSelfCheck = {
-			at: nowIso(),
-			phase: state.phase,
-			verdict: report.verdict,
-			found: report.found,
-			missing: report.missing,
-			short: report.short,
-			thin: report.thin,
-		};
-		try {
-			ctx.ui.notify(`乔哈里自检 · ${gap}`, "warning");
-		} catch {
-			/* cosmetic */
-		}
-		if (selfCheckNags < 2) {
-			selfCheckNags += 1;
-			pi.sendUserMessage(
-				[
-					`你的上一条回复的自检不完整：${gap}。`,
-					"请在回复末尾自己补写「乔哈里自检」，八项：证据 / 用词 / 框架 / 假设 / 未知 / 隐藏 / 一致性 / 下一步。",
-					"每项标签后要有实际内容（只写「无」不算）；写「无」必须说明为什么无。这不是新任务，只是把自检补完。",
-				].join(""),
-				{ deliverAs: "followUp" },
-			);
-		}
-	});
-
-	// The self-check record lands after the turn, so the session tree keeps
-	// question → answer in order and the entry hangs off the assistant message.
-	try {
-		pi.on("turn_end", () => {
-			if (!pendingSelfCheck) return;
-			const payload = pendingSelfCheck;
-			pendingSelfCheck = null;
-			try {
-				pi.appendEntry(SELFCHECK_ENTRY_TYPE, payload);
-			} catch {
-				/* best effort */
-			}
-		});
-	} catch {
-		/* older hosts: the verdict stays in the notify only */
-	}
 
 	/* ------------------------------------------------------------- hard gates */
 

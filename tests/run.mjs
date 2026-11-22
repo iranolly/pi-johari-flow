@@ -304,7 +304,7 @@ function name(list) {
 	return list.join(",");
 }
 
-/* ------------------------------------------------------------- E. self-check */
+/* ------------------------------------------------- E. no self-check nudge */
 {
 	const judge = async (text) => {
 		const h = harness();
@@ -315,7 +315,7 @@ function name(list) {
 	};
 
 	const absent = await judge("做完了，就这样。");
-	check("E1 missing self-check nudges", absent.nags === 1 && absent.result === undefined);
+	check("E1 no self-check nudge", absent.nags === 0 && absent.result === undefined);
 
 	const full = await judge(
 		[
@@ -334,7 +334,7 @@ function name(list) {
 	check("E2 complete self-check is silent", full.nags === 0 && full.result === undefined);
 
 	const bare = await judge("**乔哈里自检**\n- 证据：无\n- 用词：无\n- 框架：无\n- 假设：无\n- 未知：无\n- 隐藏：无\n- 一致性：无\n- 下一步：无");
-	check("E3 label-only self-check nudges", bare.nags === 1, notes2(bare.notes));
+	check("E3 label-only block is not nudged", bare.nags === 0, notes2(bare.notes));
 
 	const quoted = await judge(
 		[

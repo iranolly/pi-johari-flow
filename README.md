@@ -25,8 +25,7 @@ A coding agent rarely fails because it cannot type. It fails because:
 
 A Johari window is a way to close those three gaps. This package turns that idea into a state
 machine: nothing gets written while the intent is unconfirmed, nothing gets executed before you
-pick a design, and every user-facing reply ends with the model's *own* eight-dimension
-self-check that a hook can verify.
+pick a design, and every phase has to leave evidence behind.
 
 ## Quick start
 
@@ -102,16 +101,6 @@ Report pages are written for people who never read code: no code blocks, no file
 
 ![Step chain and branch diagram](docs/page-blocks.png)
 
-## The self-check
-
-Every user-facing reply from the model must end with eight labelled lines: 证据 (evidence), 用词
-(wording), 框架 (framing), 假设 (assumptions), 未知 (unknowns), 隐藏 (hidden trade-offs),
-一致性 (consistency), 下一步 (next step). The labels are Chinese on purpose — the hook matches
-them literally, and a reworded label counts as missing. The hook does not generate the section
-and does not grade it: it checks that all eight labels appear, each followed by at least four
-non-space characters, and nudges (at most twice per phase) when they are not. Short, honest lines
-are enough; padding to please the checker is not.
-
 ## Requirements and graceful degradation
 
 - **Sub-agent dispatch is optional.** If your build exposes a dispatch tool (`Agent`,
@@ -164,8 +153,8 @@ npm test        # 76 checks, no dependencies: node --experimental-strip-types te
 ```
 
 The suite links the three host packages Pi already ships and drives the extension through the
-same hooks Pi uses (gates, phase machine, page writing, CSS sanitiser, self-check, `flow_ask`,
-`setGoal`, `abort`). See `CHANGELOG.md` for what changed in 0.1.3.
+same hooks Pi uses (gates, phase machine, page writing, CSS sanitiser, `flow_ask`,
+`setGoal`, `abort`). See `CHANGELOG.md` for what changed in 0.1.4.
 
 ## License
 

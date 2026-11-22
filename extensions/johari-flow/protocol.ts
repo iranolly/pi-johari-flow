@@ -7,7 +7,6 @@
  */
 
 import type { FlowState, Phase } from "./types.ts";
-import { selfCheckRules } from "./johari.ts";
 
 const PHASE_LABEL: Record<Phase, string> = {
 	idle: "空闲",
@@ -112,8 +111,6 @@ export function buildProtocol(state: FlowState, dispatch: string[] = []): string
 		PHASE_DUTY[state.phase],
 		"",
 		johariRules(),
-		"",
-		selfCheckRules(),
 		"",
 		"### 工具契约",
 		"- `flow_page` 生成 HTML 展示页（intent / decision / report）。生成后必须告诉用户「页面已打开，请确认」。",

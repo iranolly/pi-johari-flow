@@ -4,6 +4,23 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.1.4] — 2026-11-22
+
+User request: drop the eight-line self-check that every reply had to end with.
+
+### Changed
+
+- **The self-check is gone.** `message_end` no longer inspects replies, no longer nags the model
+  to append 「乔哈里自检」, and no longer records a verdict entry. The protocol and the skill no
+  longer ask for the block, so responses stay short.
+- `checkSelfCheck` / `describeSelfCheckGap` / `selfCheckRules` remain exported from `johari.ts`
+  but are no longer wired into the extension; `selfCheckTemplate` is unused.
+
+### Tests
+
+- 76 checks: E1/E3 now assert that a reply without (or with an empty) self-check block produces
+  no nudge.
+
 ## [0.1.3] — 2026-11-22
 
 Found while smoke-testing the restarted session: the common `cd <dir> && …`
