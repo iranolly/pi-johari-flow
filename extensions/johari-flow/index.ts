@@ -773,7 +773,7 @@ const pendingAsks = new Map<string, PendingAsk>();
 const PREPARED_TTL_MS = 20 * 60 * 1000;
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.4.0";
+const PKG_VERSION = "0.4.1";
 
 /* --------------------------------------------------------------------- init */
 
@@ -1503,13 +1503,13 @@ export default function johariFlow(pi: ExtensionAPI) {
 				}
 			};
 
-			let pickedId: string | null = null;
+			let pick: { id: string; note?: string } | null = null;
 			const stop = () => pending.waiter.close();
 			_signal?.addEventListener("abort", stop, { once: true });
 			try {
-				pickedId = await pending.waiter.wait(seconds * 1000);
+				pick = await pending.waiter.wait(seconds * 1000);
 			} catch {
-				pickedId = null;
+				pick = null;
 			} finally {
 				_signal?.removeEventListener("abort", stop);
 				clearTimeout(pending.timer);
@@ -1517,7 +1517,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 				clear();
 			}
 
-			if (!pickedId) {
+			if (!pick) {
 				persist(pi, ctx);
 				return reply(
 					[
@@ -1530,14 +1530,14 @@ export default function johariFlow(pi: ExtensionAPI) {
 					{ answered: false },
 				);
 			}
-			const picked = pending.options.find((o) => o.id === pickedId);
+			const picked = pending.options.find((o) => o.id === pick.id);
 			if (!picked) {
 				persist(pi, ctx);
-				return reply(`页面返回了「${pickedId}」，对不上任何选项，没有记成决定。`, { answered: false });
+				return reply(`页面返回了「${pick.id}」，对不上任何选项，没有记成决定。`, { answered: false });
 			}
 			state.decisions.push({
 				question: pending.question,
-				answer: `${picked.id}) ${picked.label}`,
+				answer: `${picked.id}) ${picked.label}${pick.note ? `；理由：${pick.note}` : ""}`,
 				options: pending.labels,
 				at: nowIso(),
 			});
@@ -1545,6 +1545,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 			return reply(
 				[
 					`用户已选择：**${picked.id}) ${picked.label}**（在页面上点的）`,
+					pick.note ? `他的理由：${pick.note}` : "",
 					picked.detail ? `含义：${picked.detail}` : "",
 					"",
 					"下一步：按这个选择继续。若它改变了已批准方案的边界，先更新决策页再动手。",

@@ -639,6 +639,9 @@ tr:last-child td{border-bottom:0}
 
 .options{margin:6px 0 0;display:flex;flex-direction:column;gap:10px}
 .livebar{margin:10px 0 0;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--dim)}
+.asknote{display:flex;flex-direction:column;gap:6px;margin:14px 0 12px;font-size:13px;color:var(--dim)}
+.asknote textarea{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;resize:vertical}
+.asknote textarea:focus{outline:none;border-color:var(--accent)}
 .livebar.ok{border-color:var(--open);color:var(--open)}
 .livebar.warn{border-color:var(--hidden);color:var(--hidden)}
 .opt.picked{border-color:var(--open);box-shadow:inset 0 0 0 1px var(--open)}
@@ -1001,6 +1004,7 @@ function renderOptions(spec: PageSpec, live?: PageMeta["live"]): string {
 		)
 		.join("\n");
 	return `<section><div class="num">→</div><div class="body"><h2>请选择 / Your call</h2>
+${live ? '<label class="asknote"><span>想补一句理由？（可不写）</span><textarea id="asknote" rows="2" maxlength="400" placeholder="例如：先做这个，因为线上已经卡住了"></textarea></label>' : ""}
 <div class="options" data-kind="${spec.kind}">${rows}</div>
 ${live ? '<div class="livebar" id="livebar" role="status">点一项就直接作答，对话那边会收到，不用复制粘贴。</div>' : ""}
 <div class="hint">${live
@@ -1487,11 +1491,13 @@ function renderPageInner(
   function answer(el){
     var id = el.getAttribute('data-opt');
     var bar = document.getElementById('livebar');
-    var body = LIVE.token + '|' + id;
+    var noteEl = document.getElementById('asknote');
+    var note = noteEl && noteEl.value ? noteEl.value.replace(/[\\r\\n|]+/g, ' ').trim() : '';
+    var body = LIVE.token + '|' + id + '|' + note;
     fetch(LIVE.endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: body })
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
       .then(function(){
-        if (bar) { bar.className = 'livebar ok'; bar.textContent = '已记下：' + id + '。回到对话，下一步已经开始了。'; }
+        if (bar) { bar.className = 'livebar ok'; bar.textContent = '已记下：' + id + (note ? '（附了一句理由）' : '') + '。回到对话，下一步已经开始了。'; }
         document.querySelectorAll('.opt').forEach(function(x){ x.classList.add('done'); });
         el.classList.add('picked');
       })

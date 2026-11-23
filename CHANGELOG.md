@@ -4,6 +4,22 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.4.1] — 2026-11-23
+
+A click said *what*, never *why*.
+
+### Added
+
+- **A reason field on the page.** Above the options the live page shows one optional line: "想补一句理由？（可不写）". Whatever is typed travels back with the choice, so `flow_wait` can return
+  `他的理由：…` and the decision record keeps it.
+- The line is stripped of `|` and newlines before it is sent, capped at 400 characters in the box and
+  600 on the server; an empty box changes nothing.
+
+### Tests
+
+- 99 checks (was 98): I16 the note typed on the page comes back, and I6 now proves the live page
+  carries the box.
+
 ## [0.4.0] — 2026-11-23
 
 The question was a dialog, and the page was a thing the user had to open by hand — or a tab that

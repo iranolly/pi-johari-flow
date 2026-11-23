@@ -723,7 +723,7 @@ function notes2(list) {
 		await fetch(endpoint, {
 			method: "POST",
 			headers: { "Content-Type": "text/plain" },
-			body: `${token}|B`,
+			body: `${token}|B|先别急，线上还没卡死`,
 		});
 	}
 	const chosen = await hui2.wait({ timeoutSec: 5 });
@@ -732,6 +732,7 @@ function notes2(list) {
 		hui2.text(chosen).includes("再跑一遍") && hui2.text(chosen).includes("在页面上点的"),
 		hui2.text(chosen).slice(0, 80),
 	);
+	check("I16 the note typed on the page comes back too", hui2.text(chosen).includes("他的理由：先别急，线上还没卡死"));
 
 }
 

@@ -14,13 +14,19 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
+export interface AnswerPick {
+	id: string;
+	/** One optional line the user typed while choosing; already trimmed and capped. */
+	note?: string;
+}
+
 export interface AnswerWaiter {
 	/** Full URL the page must post to. */
 	endpoint: string;
 	/** Random per-question secret; a stale page from an old question cannot answer. */
 	token: string;
-	/** Resolve with an option id, or null on timeout / close. */
-	wait(ms: number): Promise<string | null>;
+	/** Resolve with the chosen option (and any note the user typed), or null. */
+	wait(ms: number): Promise<AnswerPick | null>;
 	/** Stop listening and drop every open connection. */
 	close(): void;
 }
@@ -68,15 +74,15 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 	const ids = new Set(opts.ids);
 	const token = randomBytes(16).toString("hex");
 	let settled = false;
-	let resolveAnswer: (id: string | null) => void = () => {};
-	const answered = new Promise<string | null>((resolve) => {
+	let resolveAnswer: (pick: AnswerPick | null) => void = () => {};
+	const answered = new Promise<AnswerPick | null>((resolve) => {
 		resolveAnswer = resolve;
 	});
 
-	const finish = (id: string | null) => {
+	const finish = (pick: AnswerPick | null) => {
 		if (settled) return;
 		settled = true;
-		resolveAnswer(id);
+		resolveAnswer(pick);
 	};
 
 	const server: Server = createServer((req, res) => {
@@ -95,7 +101,7 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 		}
 		void readBody(req)
 			.then((body) => {
-				const [gotToken, id] = body.trim().split("|");
+				const [gotToken, id, rawNote] = body.replace(/\r?\n/g, " ").split("|");
 				if (gotToken !== token) {
 					send(res, 403, "bad token");
 					return;
@@ -108,7 +114,8 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 					send(res, 409, "already answered");
 					return;
 				}
-				finish(id);
+				const note = (rawNote ?? "").trim().slice(0, 600) || undefined;
+				finish({ id, note });
 				send(res, 200, `ok:${id}`);
 			})
 			.catch(() => send(res, 400, "bad body"));
@@ -144,16 +151,16 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 	return {
 		endpoint: `http://127.0.0.1:${port}/answer`,
 		token,
-		async wait(ms: number): Promise<string | null> {
+		async wait(ms: number): Promise<AnswerPick | null> {
 			let timer: NodeJS.Timeout | undefined;
 			const timeout = new Promise<null>((resolve) => {
 				timer = setTimeout(() => resolve(null), ms);
 				timer.unref?.();
 			});
-			const id = await Promise.race([answered, timeout]);
+			const pick = await Promise.race([answered, timeout]);
 			if (timer) clearTimeout(timer);
 			close();
-			return id;
+			return pick;
 		},
 		close,
 	};
