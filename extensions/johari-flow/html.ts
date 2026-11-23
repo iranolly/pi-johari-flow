@@ -158,6 +158,20 @@ export interface PageSpec {
 	css?: string;
 }
 
+/**
+ * A live page can send its answer back: `live` is present only while a question is
+ * open, and it is baked into the file, so an old page cannot answer a new question.
+ */
+export interface PageMeta {
+	phase: string;
+	cwd: string;
+	sessionId: string;
+	project?: string;
+	version?: string;
+	dir?: string;
+	live?: { endpoint: string; token: string };
+}
+
 /* ------------------------------------------------------------------ markdown */
 
 /** CSS is model-authored: strip anything that could close the style element or fetch remote code. */
@@ -624,6 +638,12 @@ tr:last-child td{border-bottom:0}
 .q .empty{font-size:13px;color:var(--fg-mute);font-style:italic}
 
 .options{margin:6px 0 0;display:flex;flex-direction:column;gap:10px}
+.livebar{margin:10px 0 0;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--dim)}
+.livebar.ok{border-color:var(--open);color:var(--open)}
+.livebar.warn{border-color:var(--hidden);color:var(--hidden)}
+.opt.picked{border-color:var(--open);box-shadow:inset 0 0 0 1px var(--open)}
+.opt.done{opacity:.55}
+.opt.done.picked{opacity:1}
 .opt{
   display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start;
   background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:15px 17px;
@@ -964,12 +984,12 @@ function replyFor(spec: PageSpec, opt: PageOption): string {
 	return `${kindPrefix(spec)} · 选择 ${opt.id}：${opt.label}`;
 }
 
-function renderOptions(spec: PageSpec): string {
+function renderOptions(spec: PageSpec, live?: PageMeta["live"]): string {
 	const options = spec.options ?? [];
 	if (!options.length) return "";
 	const rows = options
 		.map(
-			(o) => `<button class="opt" type="button" data-reply="${esc(replyFor(spec, o))}">
+			(o) => `<button class="opt" type="button" data-opt="${esc(o.id)}" data-reply="${esc(replyFor(spec, o))}">
   <span class="id">${esc(o.id)}</span>
   <span>
     <span class="label">${inline(o.label)}${o.recommended ? '<span class="badge">推荐</span>' : ""}</span>
@@ -982,7 +1002,10 @@ function renderOptions(spec: PageSpec): string {
 		.join("\n");
 	return `<section><div class="num">→</div><div class="body"><h2>请选择 / Your call</h2>
 <div class="options" data-kind="${spec.kind}">${rows}</div>
-<div class="hint">点任意一项会把回执复制到剪贴板，<b>直接粘贴回 Pi 发送</b>即可。想改主意就在回执后面补充你的条件。</div>
+${live ? '<div class="livebar" id="livebar" role="status">点一项就直接作答，对话那边会收到，不用复制粘贴。</div>' : ""}
+<div class="hint">${live
+		? "这一页只有这一次有效：点完就回到对话看下一步。想改主意，在回执后面补充你的条件再发一次。"
+		: "点任意一项会把回执复制到剪贴板，<b>直接粘贴回 Pi 发送</b>即可。想改主意就在回执后面补充你的条件。"}</div>
 </div></section>`;
 }
 
@@ -1339,7 +1362,7 @@ function renderBlocks(blocks: Block[] | undefined, ctx: RenderCtx): string {
 
 export function renderPage(
 	spec: PageSpec,
-	meta: { phase: string; cwd: string; sessionId: string; project?: string; version?: string; dir?: string },
+	meta: PageMeta,
 ): string {
 	// Relative image paths resolve against the project root, and the whole page
 	// shares one byte budget so a dozen screenshots cannot make a 100MB file.
@@ -1359,9 +1382,10 @@ export function renderPage(
 
 function renderPageInner(
 	spec: PageSpec,
-	meta: { phase: string; cwd: string; sessionId: string; project?: string; version?: string; dir?: string },
+	meta: PageMeta,
 	ctx: RenderCtx,
 ): string {
+	const live = meta.live;
 	const sections = spec.sections
 		.map((s, idx) => {
 			const tone = s.tone && s.tone !== "plain" ? ` tone-${s.tone}` : "";
@@ -1419,7 +1443,7 @@ function renderPageInner(
 
   ${sections}
   ${renderQuestions(spec)}
-  ${renderOptions(spec)}
+  ${renderOptions(spec, meta.live)}
 
   <footer>
     <button class="btn" type="button" id="copyAll">复制整页文本</button>
@@ -1458,8 +1482,29 @@ function renderPageInner(
       document.body.removeChild(ta);
     }
   }
+  // A live page answers the question itself; the receipt copy is the offline fallback.
+  var LIVE = ${JSON.stringify(live ?? null)};
+  function answer(el){
+    var id = el.getAttribute('data-opt');
+    var bar = document.getElementById('livebar');
+    var body = LIVE.token + '|' + id;
+    fetch(LIVE.endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: body })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function(){
+        if (bar) { bar.className = 'livebar ok'; bar.textContent = '已记下：' + id + '。回到对话，下一步已经开始了。'; }
+        document.querySelectorAll('.opt').forEach(function(x){ x.classList.add('done'); });
+        el.classList.add('picked');
+      })
+      .catch(function(){
+        if (bar) { bar.className = 'livebar warn'; bar.textContent = '没连上对话（这一页可能已经过期）：在对话里直接说 ' + id + ' 也一样。'; }
+        copy(el.getAttribute('data-reply'));
+      });
+  }
   document.querySelectorAll('[data-reply]').forEach(function(el){
-    el.addEventListener('click', function(){ copy(el.getAttribute('data-reply')); });
+    el.addEventListener('click', function(){
+      if (LIVE && el.hasAttribute('data-opt')) answer(el);
+      else copy(el.getAttribute('data-reply'));
+    });
   });
 
   // Screenshots are embedded at their natural size: a click opens them unscaled.

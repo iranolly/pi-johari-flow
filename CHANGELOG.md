@@ -4,6 +4,32 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.2.0] — 2026-11-23
+
+A decision page could explain the choice but not accept it: the user read the page, then
+went back to the chat and typed `A`.
+
+### Added
+
+- **Clicking an option on the page is the answer.** `flow_ask` starts a loopback-only listener
+  (`127.0.0.1`, random port) that lives for exactly one question, bakes its address and a random
+  token into the page, and opens the page. A click posts `token|id`; the tool returns that id, so
+  the conversation continues without a copy-paste round trip.
+- The listener refuses a wrong token (403), an id that was never offered (400), and a second
+  answer (409). It closes on answer, on timeout, or when the tool call is aborted.
+- The page shows what happened: `已记下：A` on success, and on a dead link
+  `没连上对话（这一页可能已经过期）：在对话里直接说 A 也一样`, plus the receipt copy.
+- Page-first, picker-second: after five minutes without a click, or when the page cannot be
+  opened at all, the terminal picker asks the same question. In `-p` / JSON mode no listener is
+  started, so nothing waits for a click that cannot come.
+- A saved page stays a read-only archive: it keeps the options and the receipt copy, and says
+  plainly that answering now means saying `A` in the chat.
+
+### Tests
+
+- 97 checks (was 90): I1–I7 cover the wire end to end — click reaches the tool, wrong token,
+  unknown id, first answer wins, silence times out, live page carries the wire, saved page does not.
+
 ## [0.1.9] — 2026-11-23
 
 Report pages still showed machine records, and a picture the model wrote as a link stayed a path.

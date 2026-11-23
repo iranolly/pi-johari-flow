@@ -129,6 +129,8 @@ idle → intent → research → design → review → approved → execute → 
 3. 出现不可逆操作（删数据、`git push --force`、改生产配置）。
 4. 同一处连续两次修复失败 —— 说明理解错了，回去 `intent`/`research`。
 
+`flow_ask` 会开一个决策页并把地址烧进页面：**用户点一项就是作答**，答案直接回到对话；页面没点或点不动，五分钟后自动退回选择框。所以 `context` 要写够，用户看完就能点。
+
 `flow_ask` 写法：`question` 是能回答的选择题；`context` 讲清「为什么现在必须决定 + 已经验证了什么」；
 `options` ≥2 且每条带 `detail` 与 `cost`。它会在终端阻塞取答案，同时生成 HTML 简报。
 

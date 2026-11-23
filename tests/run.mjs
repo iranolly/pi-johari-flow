@@ -656,6 +656,49 @@ function notes2(list) {
 	check("H4 changelog has this version", changelog.includes(`## [${pkg.version}]`));
 }
 
+/* ------------------------------------------------- I. answering on the page */
+{
+	const { startAnswerServer } = await import("../extensions/johari-flow/answer.ts");
+	const waiter = await startAnswerServer({ ids: ["A", "B"] });
+	const post = (body) =>
+		fetch(waiter.endpoint, { method: "POST", headers: { "Content-Type": "text/plain" }, body });
+	const wrong = await post(`nope|A`);
+	const unknown = await post(`${waiter.token}|Z`);
+	const ok = await post(`${waiter.token}|B`);
+	const answer = await waiter.wait(3000);
+	const late = await post(`${waiter.token}|A`).catch(() => ({ status: 409 }));
+	check("I1 a page click reaches the tool", answer === "B", String(answer));
+	check("I2 wrong token refused", wrong.status === 403);
+	check("I3 unknown option refused", unknown.status === 400);
+	check("I4 first answer wins", ok.status === 200 && late.status === 409);
+
+	const timeout = await startAnswerServer({ ids: ["A"] });
+	const before = Date.now();
+	const none = await timeout.wait(150);
+	check("I5 silence resolves to null", none === null && Date.now() - before >= 140);
+	await timeout.close();
+
+	const liveHtml = renderPage(
+		{ kind: "decision", title: "选哪个", sections: [], options: [{ id: "A", label: "甲" }, { id: "B", label: "乙" }] },
+		{ phase: "测试", cwd: WORK, sessionId: "s", live: { endpoint: "http://127.0.0.1:9/answer", token: "tok123" } },
+	);
+	check(
+		"I6 live page carries the wire",
+		liveHtml.includes('"endpoint":"http://127.0.0.1:9/answer"') &&
+			liveHtml.includes('"token":"tok123"') &&
+			liveHtml.includes('data-opt="A"') &&
+			liveHtml.includes("点一项就直接作答"),
+	);
+	const deadHtml = renderPage(
+		{ kind: "decision", title: "选哪个", sections: [], options: [{ id: "A", label: "甲" }] },
+		{ phase: "测试", cwd: WORK, sessionId: "s" },
+	);
+	check(
+		"I7 a saved page stays a clipboard page",
+		deadHtml.includes('"endpoint"') === false && deadHtml.includes("粘贴回 Pi"),
+	);
+}
+
 /* ------------------------------------------------------------------ summary */
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} 通过`);

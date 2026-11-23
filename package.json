@@ -1,6 +1,6 @@
 {
   "name": "pi-johari-flow",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Johari-window delivery workflow for Pi: intent page, fact research, option design, cross review, supervised execution, HTML report — enforced by phase gates.",
   "keywords": [
     "pi-package",

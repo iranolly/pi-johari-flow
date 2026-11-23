@@ -23,6 +23,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { type AnswerWaiter, startAnswerServer } from "./answer.ts";
 import { type PageQuestion, type PageSection, type PageSpec, renderPage } from "./html.ts";
 import { buildProtocol, phaseBadge } from "./protocol.ts";
 import {
@@ -751,8 +752,11 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 	}
 }
 
+/** How long a live decision page may take to answer before the picker steps in. */
+const PAGE_WAIT_MS = 5 * 60 * 1000;
+
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.9";
+const PKG_VERSION = "0.2.0";
 
 /* --------------------------------------------------------------------- init */
 
@@ -1208,7 +1212,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 		name: "flow_ask",
 		label: "Flow · 向用户提问",
 		description:
-			"向用户提一个必须由人拍板的决策问题（终端选择 + 可选 HTML 简报），阻塞直到用户回答，并把答案记进流程状态。",
+			"向用户提一个必须由人拍板的决策问题：打开决策页，用户点一项就算作答（点不动或超时再用选择框），答案记进流程状态。",
 		promptSnippet: "向用户提出一个带选项的决策问题并等待回答",
 		promptGuidelines: [
 			"Use flow_ask whenever a decision belongs to the user (scope, trade-off, irreversible action, conflicting requirements) instead of guessing.",
@@ -1235,7 +1239,27 @@ export default function johariFlow(pi: ExtensionAPI) {
 
 			let pageUrl = "";
 			let pageRecord = "";
+			// The listener is the wire back from a `file://` page: it exists only for this
+			// one question and dies with it. No listener, no live page — the picker below
+			// still asks the same question.
+			let waiter: AnswerWaiter | null = null;
 			if (params.page !== false) {
+				try {
+					// No UI means nobody can click: print/json runs still get the page as an
+					// artifact, but must not sit waiting for an answer that cannot come.
+					if (!ctx.hasUI) throw new Error("当前模式没有交互界面");
+					waiter = await startAnswerServer({ ids: options.map((o) => o.id) });
+				} catch (err) {
+					waiter = null;
+					try {
+						ctx.ui.notify(
+							`页面作答通道没起来（不影响提问，会改用选择框）：${err instanceof Error ? err.message : String(err)}`,
+							"warning",
+						);
+					} catch {
+						/* no UI */
+					}
+				}
 				const dir = resolve(ctx.cwd, ".pi", "flow", sessionSlug(ctx));
 				const spec: PageSpec = {
 					kind: "decision",
@@ -1260,6 +1284,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 					project: basename(ctx.cwd),
 					version: PKG_VERSION,
 					dir,
+					live: waiter ? { endpoint: waiter.endpoint, token: waiter.token } : undefined,
 				});
 				try {
 					const absPath = await writePage(dir, "decision", html);
@@ -1286,9 +1311,19 @@ export default function johariFlow(pi: ExtensionAPI) {
 						spec,
 					});
 					if (rec) pageRecord = relRecord;
-					// The picker below blocks the turn, so the link has to surface now.
+					// The wait below blocks the turn, so the page has to be in front of the
+					// user now — a link they have to paste is not an answer channel.
+					const opened = waiter ? await openInBrowser(pi, pageUrl) : false;
+					// A page nobody could open cannot answer: hand the question back to the picker.
+					if (waiter && !opened) {
+						waiter.close();
+						waiter = null;
+					}
 					try {
-						ctx.ui.notify(`决策页：${pageUrl}`, "info");
+						ctx.ui.notify(
+							opened ? `决策页已打开，点一项就算作答：${pageUrl}` : `决策页：${pageUrl}`,
+							"info",
+						);
 					} catch {
 						/* cosmetic */
 					}
@@ -1307,21 +1342,37 @@ export default function johariFlow(pi: ExtensionAPI) {
 
 			let answer: string | undefined;
 			let timedOut = false;
+			let fromPage = false;
 			try {
-				if (ctx.hasUI) {
+				if (waiter) {
+					const stop = () => waiter?.close();
+					_signal?.addEventListener("abort", stop, { once: true });
+					const pickedId = await waiter.wait(PAGE_WAIT_MS);
+					_signal?.removeEventListener("abort", stop);
+					if (pickedId) {
+						answer = pickedId;
+						fromPage = true;
+					}
+				}
+				// The page gets the first word; the picker is the guaranteed way out —
+				// closed tab, no browser, or a user who would rather click in the chat.
+				if (!answer && !_signal?.aborted && ctx.hasUI) {
 					const picked = await ctx.ui.select(params.question, labels);
 					if (picked == null) timedOut = true;
 					else answer = picked;
 				}
 			} catch {
 				timedOut = true;
+			} finally {
+				waiter?.close();
+				waiter = null;
 			}
 
 			if (!answer) {
 				persist(pi, ctx);
 				return reply(
 					[
-						`问题未在终端得到回答${timedOut ? "（用户取消或超时）" : "（当前模式没有交互 UI）"}：`,
+						`问题没有得到回答${timedOut ? "（页面没点、选择框也取消了）" : "（当前模式没有交互 UI）"}：`,
 						`**${params.question}**`,
 						...labels.map((l) => `- ${l}`),
 						"",
@@ -1358,7 +1409,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 
 			return reply(
 				[
-					`用户已选择：**${picked.id}) ${picked.label}**`,
+					`用户已选择：**${picked.id}) ${picked.label}**${fromPage ? "（在页面上点的）" : ""}`,
 					picked.detail ? `含义：${picked.detail}` : "",
 					pageUrl ? `决策页地址（默认不打开，需要时贴给用户）：${pageUrl}` : "",
 					pageRecord ? `配置记录：\`${pageRecord}\`` : "",
