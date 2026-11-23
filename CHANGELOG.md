@@ -4,6 +4,28 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.3.0] — 2026-11-23
+
+A question was only a dialog: the reason and the price sat in a page nobody opened.
+
+### Added
+
+- **A decision card in the conversation.** `flow_ask` sends a partial result as soon as it
+  starts: the question, the background, every option with its cost, and which one is
+  recommended. It is visible while the picker is open, and the final result replaces it with
+  the decision. Works in `-p` / JSON mode too, where the card is all you get.
+- **The question is visible outside the dialog.** A widget (`johari · 待拍板`) sits above the
+  composer and a footer status line says the same thing; both are cleared on every exit path —
+  answer, cancel, timeout, abort.
+- `docs/interaction.md`: what pi + pi-web can actually do for a question (dialogs, the orange
+  dot and sound, widgets, chat cards, the file panel, the not-yet-wired `custom` channel), and
+  the three-layer plan that follows from it.
+
+### Tests
+
+- 102 checks (was 98): I9 the card appears while waiting, I10 the widget is set, I11 the banner
+  is cleared, I12 an unanswered question says so.
+
 ## [0.2.1] — 2026-11-23
 
 0.2.0 opened a browser tab for every question, which interrupts whatever the user was doing.

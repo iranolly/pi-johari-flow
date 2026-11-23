@@ -116,6 +116,9 @@ Report pages are written for people who never read code: no code blocks, no file
   `subagent`, `task`, …) the protocol names it and asks for one agent per angle. If it does not,
   the protocol switches to *degraded self-review*: you review from several angles yourself and
   label the result as degraded on every page.
+- **[How a question should work](./docs/interaction.md)** — what pi and pi-web can actually do
+  (dialogs, the orange dot and sound, widgets, chat cards, the file panel) and the three-layer
+  plan built on it.
 - **Asking does not hijack the browser.** By default `flow_ask` asks in the chat: the picker is the
   dialog the host already shows for pending questions (Pi Web rings and dots it), and every choice
   carries its cost. A page is still written as an artifact, but nothing opens it.

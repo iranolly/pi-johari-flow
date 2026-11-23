@@ -53,10 +53,14 @@ function harness() {
 			sent.push({ content, opts });
 		},
 	};
+	let widget;
 	const ui = {
 		notify: (m) => notes.push(m),
 		setStatus: (k, v) => {
 			status = [k, v];
+		},
+		setWidget: (k, v) => {
+			widget = [k, v];
 		},
 		select: async () => undefined,
 		confirm: async () => false,
@@ -88,6 +92,8 @@ function harness() {
 		notes,
 		sent,
 		status: () => status,
+		widget: () => widget,
+		askWith: (p, onUpdate) => tools.flow_ask.execute("call", p, undefined, onUpdate, ctx),
 		plan: (p) => tools.flow_plan.execute("call", p, undefined, undefined, ctx),
 		fire_tool: fire,
 		page: (p) => tools.flow_page.execute("call", p, undefined, undefined, ctx),
@@ -671,6 +677,30 @@ function notes2(list) {
 	});
 	const text = h.text(asked);
 	check("I8 picker carries the cost line", text.includes("代价：之后返工") && text.includes("代价：多花一天"));
+
+	// The card lands while the picker is open, so the question is readable in the chat.
+	const partials = [];
+	const askedWithCard = await h.askWith(
+		{
+			question: "先做哪块？",
+			context: "两件事都想要，但只能先做一件。",
+			options: [
+				{ id: "A", label: "先修图片", cost: "代价：链接晚一天" },
+				{ id: "B", label: "先修链接", cost: "代价：图片晚一天", recommended: true },
+			],
+		},
+		(partial) => partials.push(partial),
+	);
+	const card = String(partials[0]?.content?.[0]?.text ?? "");
+	check(
+		"I9 the card appears while waiting",
+		card.includes("需要你拍板") && card.includes("代价：链接晚一天") && card.includes("（推荐）"),
+	);
+	check("I10 the question is visible outside the dialog", h.widget()?.[0]?.includes("待拍板") === true);
+	// the footer status is shared: the flow re-renders its own line right after, so only the
+	// widget is expected to be gone by itself.
+	check("I11 the banner is cleared after the answer", h.widget()?.[1] === undefined);
+	check("I12 an unanswered question says so", h.text(askedWithCard).includes("没有得到回答"));
 }
 {
 	const { startAnswerServer } = await import("../extensions/johari-flow/answer.ts");

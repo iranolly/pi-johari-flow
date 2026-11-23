@@ -756,7 +756,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 const PAGE_WAIT_MS = 5 * 60 * 1000;
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.2.1";
+const PKG_VERSION = "0.3.0";
 
 /* --------------------------------------------------------------------- init */
 
@@ -1232,7 +1232,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 			const options = params.options ?? [];
 			// The picker is the default surface, so it has to carry the cost, not just the
 			// title: a dialog without a price tag is a coin flip.
@@ -1243,6 +1243,46 @@ export default function johariFlow(pi: ExtensionAPI) {
 					{ answered: false },
 				);
 			}
+
+			// The card is the page, for the 90% of questions that do not need one: it lands
+			// in the conversation as soon as the tool starts, so the person can read while
+			// the picker is already open. The final result replaces it with the decision.
+			const card = [
+				`**需要你拍板：${params.question}**`,
+				params.context ? String(params.context).trim() : "",
+				options
+					.map(
+						(o) =>
+							`- **${o.id}) ${o.label}**${o.recommended ? "（推荐）" : ""}${o.cost ? ` — 代价：${o.cost}` : ""}`,
+					)
+					.join("\n"),
+			]
+				.filter(Boolean)
+				.join("\n\n");
+			try {
+				onUpdate?.({ content: [{ type: "text", text: card }], details: { waiting: true } } as never);
+			} catch {
+				/* a host without partial results still gets the picker */
+			}
+			// A pending dialog already dots the session; the widget keeps the question visible
+			// in the chat itself, and the status line keeps it visible in the footer.
+			try {
+				ctx.ui.setWidget("johari · 待拍板", [
+					`⏳ 等你拍板：${params.question}`,
+					`${options.length} 个选项，每个都写了代价；点一项就继续。`,
+				]);
+				ctx.ui.setStatus("johari", "等你拍板");
+			} catch {
+				/* fire-and-forget */
+			}
+			const clearAsk = () => {
+				try {
+					ctx.ui.setWidget("johari · 待拍板", undefined);
+					ctx.ui.setStatus("johari", undefined);
+				} catch {
+					/* fire-and-forget */
+				}
+			};
 
 			let pageUrl = "";
 			let pageRecord = "";
@@ -1378,9 +1418,11 @@ export default function johariFlow(pi: ExtensionAPI) {
 			} finally {
 				waiter?.close();
 				waiter = null;
+				clearAsk();
 			}
 
 			if (!answer) {
+				clearAsk();
 				persist(pi, ctx);
 				return reply(
 					[
@@ -1401,6 +1443,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 					return a === o.id || a === `${o.id})` || a.startsWith(`${o.id})`);
 				});
 			if (!picked) {
+				clearAsk();
 				persist(pi, ctx);
 				return reply(
 					[
