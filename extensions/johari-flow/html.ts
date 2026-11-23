@@ -201,7 +201,24 @@ let renderBase = "";
 let renderDir = "";
 
 /** A path becomes a link only when the file is really there; otherwise it stays code. */
+const IMAGE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|svg|avif)$/i;
+/** Machine records: the reader never opens them, so they never become links. */
+const DATA_EXT_RE = /\.(?:json|log|csv|ndjson|ya?ml)$/i;
+
+function stripQuery(href: string): string {
+	return href.split(/[?#]/)[0];
+}
+
+function isImageHref(href: string): boolean {
+	return IMAGE_EXT_RE.test(stripQuery(href));
+}
+
+function isDataHref(href: string): boolean {
+	return DATA_EXT_RE.test(stripQuery(href));
+}
+
 function pathHref(p: string): string | null {
+	if (isDataHref(p)) return null; // a json/log link is noise for the reader
 	if (/:\d+$/.test(p)) return null; // `file.ts:42` — a browser cannot jump to a line
 	const candidates = isAbsolute(p)
 		? [p]
@@ -221,11 +238,12 @@ function inline(s: string): string {
 	out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
 	out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 	out = out.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,，。]|$)/g, "$1<em>$2</em>");
-	out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, text: string, href: string) =>
-		SAFE_HREF.test(href)
+	out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, text: string, href: string) => {
+		if (isDataHref(href)) return text; // evidence records stay out of the reader's way
+		return SAFE_HREF.test(href)
 			? `<a href="${href}" target="_blank" rel="noreferrer noopener">${text}</a>`
-			: `${text} (${href})`,
-	);
+			: `${text} (${href})`;
+	});
 	// Bare http(s) links stay clickable; an href we just wrote is never wrapped twice.
 	const beforeUrls = out;
 	out = out.replace(/(^|[\s(（])(https?:\/\/[^\s<>()（）\u3000-\u303f]+)/g, (all, pre: string, raw: string, offset: number) => {
@@ -245,6 +263,7 @@ function inline(s: string): string {
 		},
 	);
 	out = out.replace(/(^|[\s(（])((?:[A-Za-z]:)?[\w.@+-]*(?:[/\\][\w.@+-]+)+\.\w{1,6}(?::\d+)?)/g, (_all, pre: string, p: string) => {
+		if (isDataHref(p)) return `${pre}${p}`; // plain text: no link, no monospace
 		const href = pathHref(p);
 		return href ? `${pre}<a class="pathlink" href="${href}">${p}</a>` : `${pre}<code class="path">${p}</code>`;
 	});
@@ -289,7 +308,7 @@ type InlineImage = { ok: true; href: string } | { ok: false; reason: string };
  * works from `file://`, from a moved folder, and from a mail attachment. Remote
  * URLs are refused on purpose — fetching one would leak that the page was read.
  */
-export function inlineImage(rawSrc: string, base: string, budget: ImageBudget): InlineImage {
+export function inlineImage(rawSrc: string, budget: ImageBudget): InlineImage {
 	const src = String(rawSrc ?? "").trim();
 	if (!src) return { ok: false, reason: "图片地址是空的" };
 	if (/^data:image\//i.test(src)) {
@@ -305,7 +324,16 @@ export function inlineImage(rawSrc: string, base: string, budget: ImageBudget): 
 	} catch {
 		/* keep the raw path */
 	}
-	const abs = isAbsolute(file) ? file : resolvePath(base, file);
+	const candidates = isAbsolute(file)
+		? [file]
+		: ([renderBase && resolvePath(renderBase, file), renderDir && resolvePath(renderDir, file)].filter(Boolean) as string[]);
+	const abs = candidates.find((c) => {
+		try {
+			return statSync(c).isFile();
+		} catch {
+			return false;
+		}
+	}) ?? candidates[0] ?? file;
 
 	let buf: Buffer;
 	try {
@@ -326,11 +354,11 @@ export function inlineImage(rawSrc: string, base: string, budget: ImageBudget): 
 }
 
 /** Image grid + readable warnings for the ones that could not be inlined. */
-function renderShots(images: Shot[], base: string, budget: ImageBudget, caption?: string): string {
+function renderShots(images: Shot[], budget: ImageBudget, caption?: string): string {
 	const misses: string[] = [];
 	const figs = images
 		.map((img) => {
-			const inlined = inlineImage(img.src, base, budget);
+			const inlined = inlineImage(img.src, budget);
 			if (!inlined.ok) {
 				misses.push(inlined.reason);
 				return "";
@@ -405,7 +433,31 @@ function mdToHtmlInner(src: string, base: string, budget: ImageBudget): string {
 		const img = line.match(MD_IMAGE_RE);
 		if (img) {
 			flush();
-			out.push(renderShots([{ src: img[2], alt: img[1] || undefined, caption: img[1] || undefined }], base, budget));
+			out.push(renderShots([{ src: img[2], alt: img[1] || undefined, caption: img[1] || undefined }], budget));
+			continue;
+		}
+		// A link to a picture is a picture: `[末页实拍](evidence/06-end.png)` must not
+		// reach the reader as a path they have to click.
+		const imgLinks = [...line.matchAll(/\[([^\]]*)\]\(\s*<?([^)\s>]+)>?\s*\)/g)].filter((m) => isImageHref(m[2]));
+		if (imgLinks.length) {
+			flush();
+			out.push(renderShots(imgLinks.map((m) => ({ src: m[2], caption: m[1] || undefined })), budget));
+			const rest = line
+				.replace(/\[([^\]]*)\]\(\s*<?([^)\s>]+)>?\s*\)/g, (all, _t: string, href: string) =>
+					isImageHref(href) ? "" : all,
+				)
+				.replace(/^[\s·、，,;；]+|[\s·、，,;；]+$/g, "");
+			if (rest) para.push(rest);
+			continue;
+		}
+		// The same picture written bare on its own line.
+		const bareImg = line
+			.trim()
+			.replace(/^[（(]\s*|\s*[）)]$/g, "")
+			.match(/^([\w.@+-]*(?:[/\\][\w.@+-]+)+\.(?:png|jpe?g|gif|webp|bmp|svg|avif))$/i);
+		if (bareImg && pathHref(bareImg[1])) {
+			flush();
+			out.push(renderShots([{ src: bareImg[1] }], budget));
 			continue;
 		}
 		const h = line.match(/^(#{1,6})\s+(.*)$/);
@@ -1268,7 +1320,7 @@ function renderBlock(b: Block, ctx: RenderCtx): string {
 		case "state":
 			return renderState(b.states ?? [], b.transitions ?? []);
 		case "image":
-			return renderShots(b.images ?? [], ctx.base, ctx.budget, b.caption);
+			return renderShots(b.images ?? [], ctx.budget, b.caption);
 		default:
 			// A misspelled kind must be visible, never a silently blank page.
 			return `<div class="blk callout warn"><div class="ct">未知的展示块</div><div class="cx">kind = ${esc(String((b as { kind?: string }).kind ?? "(空)"))}。可用：flow / timeline / stats / bars / compare / callout / loop / facts / tree / branch / sequence / graph / state / image。</div></div>`;

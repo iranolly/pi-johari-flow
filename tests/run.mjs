@@ -398,6 +398,33 @@ const firstLine = (s) => String(s).split("\n")[0];
 		`${urlAnchors.length} anchors`,
 	);
 
+	// a picture written as a link is a picture; a record file is never a link
+	writeFileSync(join(shots, "rec.json"), '{"ok":true}');
+	const picLinkHtml = renderPage(
+		{
+			kind: "report",
+			title: "证据",
+			sections: [
+				{
+					heading: "末页",
+					body: "[末页实拍](shots/ok.png) · [末页出现时机](shots/rec.json)",
+				},
+			],
+		},
+		{ phase: "测试", cwd: WORK, sessionId: "s" },
+	);
+	check(
+		"D2m a link to a picture renders as a picture",
+		/<figure class="shot"><img src="data:image\/png/.test(picLinkHtml) &&
+			picLinkHtml.includes("<figcaption>末页实拍</figcaption>"),
+	);
+	check(
+		"D2n a record file never becomes a link",
+		!picLinkHtml.includes("rec.json</a>") &&
+			!picLinkHtml.includes('<code class="path">shots/rec.json') &&
+			picLinkHtml.includes("末页出现时机"),
+	);
+
 	// a page must hand the caller an address and must not grab a browser window
 	const execBefore = h.exec.length;
 	const linked = await h.page({ kind: "report", title: "地址测试", sections: [], open: false });

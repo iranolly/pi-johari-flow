@@ -4,6 +4,28 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.1.9] — 2026-11-23
+
+Report pages still showed machine records, and a picture the model wrote as a link stayed a path.
+
+### Changed
+
+- **A link to a picture renders as the picture**: `[末页实拍](evidence/06-end.png)` becomes a figure
+  captioned with the link text; a bare picture path alone on a line does the same. Before, both
+  stayed clickable paths — the picture never appeared.
+- **Record files never become links or code**: `json` / `log` / `csv` / `ndjson` / `yaml` links and
+  paths render as plain text. The reader was never going to open them, and a page should not
+  advertise them.
+- **Pictures resolve like paths**: project root first, then the page's own folder — evidence kept
+  next to the page now loads.
+- Protocol, skill and the `flow_page` guidelines say it outright: evidence is a screenshot or a
+  readable number, never a record file.
+
+### Tests
+
+- 90 checks (was 88): D2m a link to a picture renders as a picture, D2n a record file never
+  becomes a link.
+
 ## [0.1.8] — 2026-11-22
 
 Report copy pointed at files the reader could not open: every path was plain text.

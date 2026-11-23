@@ -752,7 +752,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.1.8";
+const PKG_VERSION = "0.1.9";
 
 /* --------------------------------------------------------------------- init */
 
@@ -1079,6 +1079,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 			"One decision per section: give one `lead` sentence and 1-2 blocks; leave `note` inside blocks empty unless the number or picture genuinely cannot carry the point.",
 			"Pick the carrier that matches the shape of the content: hierarchy (code map / module structure) → `tree`; if-then paths → `branch`; who-talks-to-whom in order → `sequence`; what-depends-on-what → `graph`; states and transitions → `state`.",
 			"When the reader must see something for real (screenshot, before/after, failure screen), use a block `{kind:\"image\", images:[{src,caption?}]}` with a local file path — relative to the project root or absolute. It is inlined into the page, so the page still opens offline. Remote http(s) images are refused on purpose; save them locally first.",
+			"Evidence in a report is a screenshot (`image` block) or a number the reader can read. Never put json / log / csv record files in the page as links or paths — the reader will not open them, and the page should not mention them.",
 			"Use `css` only when the default layout truly cannot hold the content; it appends to the default stylesheet and overrides it.",
 		],
 		parameters: Type.Object({

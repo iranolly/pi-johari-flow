@@ -65,7 +65,7 @@ const PHASE_DUTY: Record<Phase, string> = {
 	report: [
 		"要做的事：用 `flow_page {kind:\"report\"}` 出完成报告页（目标 vs 实际、交付物、验证证据、偏差、遗留风险、下一步）。",
 		"报告里每一句结论都要能指到证据：文件路径、命令、测试输出、sub agent 结论。",
-		"**写给不看代码的人**：不贴代码、不写文件名/函数名/命令、不用术语；用 14 种载体块说话（flow / timeline / stats / bars / compare / callout / loop / facts / tree / branch / sequence / graph / state / image）—— 层级用 tree、岔路用 branch、多方往来用 sequence、依赖用 graph、状态用 state、要亲眼看的东西用 image，每节先给一句 `lead` 大白话结论，段落只当补充。",
+		"**写给不看代码的人**：不贴代码、不写文件名/函数名/命令、不用术语；用 14 种载体块说话（flow / timeline / stats / bars / compare / callout / loop / facts / tree / branch / sequence / graph / state / image）—— 层级用 tree、岔路用 branch、多方往来用 sequence、依赖用 graph、状态用 state、要亲眼看的东西用 image，每节先给一句 `lead` 大白话结论，段落只当补充；证据放截图（`image` 块）或看得懂的数字，不要写 json / log / csv 记录文件的链接或路径。",
 		"然后 `flow_plan {action:\"advance\", to:\"done\"}` 收尾。",
 	].join("\n"),
 	done: "本次流程已结束。可以开始新的流程。",
@@ -86,7 +86,7 @@ function johariRules(): string {
 		"2. 面向用户的最终回复固定四段：**结论 / 依据 / 未验证或风险 / 需要你决定的事**（没有就写「无」）。",
 		"3. 禁止用「应该可以」「大概没问题」这类话结束一个判断；要么给证据，要么标未知。",
 		"4. 禁止替用户做价值观判断。给选项和代价，让用户选。",
-		"5. 给用户看的 HTML 页面/报告一律写**大白话**：不出现代码、文件名、英文标识符、术语；用 14 种载体块说话（步骤链 `flow` / 时间线 `timeline` / 大数字 `stats` / 条形 `bars` / 左右对照 `compare` / 重点框 `callout` / 循环 `loop` / 键值 `facts` / 层级 `tree` / 岔路 `branch` / 多方往来 `sequence` / 依赖 `graph` / 状态 `state` / 截图 `image`），按内容的形状挑载体：能画图就别写段落，每节先一句 `lead` 大白话结论。",
+		"5. 给用户看的 HTML 页面/报告一律写**大白话**：不出现代码、文件名、英文标识符、术语；用 14 种载体块说话（步骤链 `flow` / 时间线 `timeline` / 大数字 `stats` / 条形 `bars` / 左右对照 `compare` / 重点框 `callout` / 循环 `loop` / 键值 `facts` / 层级 `tree` / 岔路 `branch` / 多方往来 `sequence` / 依赖 `graph` / 状态 `state` / 截图 `image`），按内容的形状挑载体：能画图就别写段落，每节先一句 `lead` 大白话结论；证据用截图（`image`）或数字，不写 json / log / csv 的链接与路径。",
 	].join("\n");
 }
 

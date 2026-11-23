@@ -105,6 +105,7 @@ the field named below:
 An unknown or misspelled `kind` renders a visible warning card instead of a silent blank spot.
 Local paths in the copy (`comet-audit/timeline.html`, `notes/a.png`) turn into clickable links
 when the file exists, and bare `https://` URLs are clickable too — no link syntax needed.
+A link to a picture becomes the picture; `json` / `log` / `csv` records never become links.
 Report pages are written for people who never read code: no code blocks, no file names.
 
 ![Step chain and branch diagram](docs/page-blocks.png)
