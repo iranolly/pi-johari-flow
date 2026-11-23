@@ -542,6 +542,7 @@ function notes2(list) {
 	check("F1 ask without UI answers false", payload.answered === false);
 	check("F1b ask explains itself without UI", h.text(asked).includes("没有交互 UI"));
 
+
 	check("F2 setGoal before approval", h.text(await h.plan({ action: "setGoal", goal: "新意图" })).includes("重新确认"));
 	await h.plan({ action: "confirm", reason: "用户确认" });
 	await h.plan({ action: "advance", to: "research" });
@@ -657,6 +658,20 @@ function notes2(list) {
 }
 
 /* ------------------------------------------------- I. answering on the page */
+{
+	// The picker is the default surface: a choice without a price tag is a coin flip.
+	const h = harness();
+	h.fire("session_start", {});
+	const asked = await h.ask({
+		question: "选哪个？",
+		options: [
+			{ id: "A", label: "快但粗糙", cost: "代价：之后返工" },
+			{ id: "B", label: "慢但稳", cost: "代价：多花一天" },
+		],
+	});
+	const text = h.text(asked);
+	check("I8 picker carries the cost line", text.includes("代价：之后返工") && text.includes("代价：多花一天"));
+}
 {
 	const { startAnswerServer } = await import("../extensions/johari-flow/answer.ts");
 	const waiter = await startAnswerServer({ ids: ["A", "B"] });

@@ -62,7 +62,7 @@ can only be produced in `execute` or `report`.
 | --- | --- |
 | `flow_plan` | `start` / `setGoal` / `status` / `advance` / `confirm` / `approve` / `abort` |
 | `flow_page` | intent, decision and report pages (HTML, offline) |
-| `flow_ask` | one decision: a live decision page where the click *is* the answer, with a terminal picker as the way out — blocks until answered when a UI exists, returns `answered:false` in `-p` / JSON mode |
+| `flow_ask` | one decision: an in-chat picker whose choices carry their cost, so it works without a page — `open:true` switches to the page-first mode; returns `answered:false` in `-p` / JSON mode |
 | `/flow` | `status` · `start <goal>` · `approve` · `report` · `abort` |
 
 `setGoal` re-opens the intent phase (goal changes void the old confirmation). It is refused
@@ -116,10 +116,13 @@ Report pages are written for people who never read code: no code blocks, no file
   `subagent`, `task`, …) the protocol names it and asks for one agent per angle. If it does not,
   the protocol switches to *degraded self-review*: you review from several angles yourself and
   label the result as degraded on every page.
-- **Answering happens on the page.** `flow_ask` starts a loopback-only listener for exactly one
-  question, bakes its address and a random token into the page, and opens it. Clicking an option
-  posts the id back and the tool returns it — no copy, no paste. The listener dies with the
-  question; a page that outlives it is a read-only archive and says so.
+- **Asking does not hijack the browser.** By default `flow_ask` asks in the chat: the picker is the
+  dialog the host already shows for pending questions (Pi Web rings and dots it), and every choice
+  carries its cost. A page is still written as an artifact, but nothing opens it.
+- **Answering on the page is opt-in.** With `open:true` the tool starts a loopback-only listener for
+  exactly one question, bakes its address and a random token into the page, and opens it. Clicking
+  an option posts the id back and the tool returns it — no copy, no paste. The listener dies with
+  the question; a page that outlives it is a read-only archive and says so.
 - **UI is optional.** In `-p` / JSON mode `flow_ask` reports that it could not ask instead of
   pretending, and `flow_page` writes the page without launching a browser.
 

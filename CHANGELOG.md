@@ -4,6 +4,24 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.2.1] — 2026-11-23
+
+0.2.0 opened a browser tab for every question, which interrupts whatever the user was doing.
+
+### Changed
+
+- **The picker is the default again.** `flow_ask` asks in the chat, through the same dialog the host
+  shows for a pending question — in Pi Web that is the orange dot and the sound, not a new tab. No
+  listener, no page, nothing to click away.
+- **Every choice carries its cost in the picker**, so the dialog is usable without reading a page.
+- **`open:true` keeps 0.2.0's page-first mode**: live page, five-minute window, picker as the way out.
+  It is now opt-in rather than forced.
+- The decision page is still written and reported as an artifact; it is simply not opened for you.
+
+### Tests
+
+- 98 checks (was 97): I8 the picker carries the cost line.
+
 ## [0.2.0] — 2026-11-23
 
 A decision page could explain the choice but not accept it: the user read the page, then

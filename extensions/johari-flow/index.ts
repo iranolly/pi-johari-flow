@@ -756,7 +756,7 @@ function dispatchToolNames(pi: ExtensionAPI): string[] {
 const PAGE_WAIT_MS = 5 * 60 * 1000;
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.2.0";
+const PKG_VERSION = "0.2.1";
 
 /* --------------------------------------------------------------------- init */
 
@@ -1212,7 +1212,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 		name: "flow_ask",
 		label: "Flow · 向用户提问",
 		description:
-			"向用户提一个必须由人拍板的决策问题：打开决策页，用户点一项就算作答（点不动或超时再用选择框），答案记进流程状态。",
+			"向用户提一个必须由人拍板的决策问题：默认在对话里弹选择框（界面会给未读提示），选项自带代价；要页面作答就传 open:true。",
 		promptSnippet: "向用户提出一个带选项的决策问题并等待回答",
 		promptGuidelines: [
 			"Use flow_ask whenever a decision belongs to the user (scope, trade-off, irreversible action, conflicting requirements) instead of guessing.",
@@ -1226,10 +1226,17 @@ export default function johariFlow(pi: ExtensionAPI) {
 			}),
 			johari: Type.Optional(JohariSchema),
 			page: Type.Optional(Type.Boolean({ description: "是否同时生成 HTML 决策简报，默认 true" })),
+			open: Type.Optional(
+				Type.Boolean({
+					description: "是否打开决策页并等用户在上面点选（默认 false：只在对话里弹选择框，不打扰用户）",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const options = params.options ?? [];
-			const labels = options.map((o) => `${o.id}) ${o.label}`);
+			// The picker is the default surface, so it has to carry the cost, not just the
+			// title: a dialog without a price tag is a coin flip.
+			const labels = options.map((o) => `${o.id}) ${o.label}${o.cost ? ` — ${o.cost}` : ""}`);
 			if (options.length < 2) {
 				return reply(
 					"flow_ask 至少要两个真实选项（每个都写代价）。如果这道题只有一个正确答案，那不该问用户，该你自己决定并说明理由。",
@@ -1245,19 +1252,24 @@ export default function johariFlow(pi: ExtensionAPI) {
 			let waiter: AnswerWaiter | null = null;
 			if (params.page !== false) {
 				try {
-					// No UI means nobody can click: print/json runs still get the page as an
-					// artifact, but must not sit waiting for an answer that cannot come.
+					// No UI means nobody can click, and a page nobody asked to open must not
+					// start one either: print/json runs still get the page as an artifact.
 					if (!ctx.hasUI) throw new Error("当前模式没有交互界面");
+					if (params.open !== true) throw new Error("没有要求打开页面");
 					waiter = await startAnswerServer({ ids: options.map((o) => o.id) });
 				} catch (err) {
 					waiter = null;
-					try {
-						ctx.ui.notify(
-							`页面作答通道没起来（不影响提问，会改用选择框）：${err instanceof Error ? err.message : String(err)}`,
-							"warning",
-						);
-					} catch {
-						/* no UI */
+					// Asking for a page and silently not getting one is the surprise to avoid;
+					// not asking for one is the normal path and needs no notice.
+					if (params.open === true && ctx.hasUI) {
+						try {
+							ctx.ui.notify(
+								`页面作答通道没起来（不影响提问，会改用选择框）：${err instanceof Error ? err.message : String(err)}`,
+								"warning",
+							);
+						} catch {
+							/* no UI */
+						}
 					}
 				}
 				const dir = resolve(ctx.cwd, ".pi", "flow", sessionSlug(ctx));
@@ -1411,7 +1423,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 				[
 					`用户已选择：**${picked.id}) ${picked.label}**${fromPage ? "（在页面上点的）" : ""}`,
 					picked.detail ? `含义：${picked.detail}` : "",
-					pageUrl ? `决策页地址（默认不打开，需要时贴给用户）：${pageUrl}` : "",
+					pageUrl ? `决策页（背景写得更全，没有自动打开）：${pageUrl}` : "",
 					pageRecord ? `配置记录：\`${pageRecord}\`` : "",
 					"",
 					"下一步：按这个选择继续。若它改变了已批准方案的边界，先更新决策页再动手。",

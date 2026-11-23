@@ -114,7 +114,7 @@ export function buildProtocol(state: FlowState, dispatch: string[] = []): string
 		"",
 		"### 工具契约",
 		"- `flow_page` 生成 HTML 展示页（intent / decision / report），并在同目录写一份同名 `.json` 配置记录。默认**不**打开浏览器：把返回的打开地址原样贴给用户。",
-		"- `flow_ask` 向用户提一个决策问题：先开决策页，用户点一项就作答（页面点不动或五分钟没点，再退回选择框），会阻塞直到有答案。",
+		"- `flow_ask` 向用户提一个决策问题：默认在对话里弹选择框（没看这个会话时界面会提示），选项自带代价；用户明确要「在页面上点」时才传 `open: true`。",
 		"- `flow_plan` 推进/查看/终止流程。**不要**在没完成本阶段职责时推进。",
 		"- 派发 sub agent：" +
 			(dispatch.length
