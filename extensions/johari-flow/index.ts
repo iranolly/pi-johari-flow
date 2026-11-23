@@ -773,7 +773,7 @@ const pendingAsks = new Map<string, PendingAsk>();
 const PREPARED_TTL_MS = 20 * 60 * 1000;
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.4.1";
+const PKG_VERSION = "0.4.2";
 
 /* --------------------------------------------------------------------- init */
 

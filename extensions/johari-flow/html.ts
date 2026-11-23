@@ -581,11 +581,11 @@ h1{
 .lede{font-size:17.5px;color:var(--fg-dim);max-width:70ch;margin:0}
 .lede strong{color:var(--fg);font-weight:600}
 
-section{display:grid;grid-template-columns:64px 1fr;gap:24px;padding:34px 0;border-bottom:1px solid var(--line)}
+section{padding:34px 0;border-bottom:1px solid var(--line)}
 section:last-of-type{border-bottom:0}
 .num{
   font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--fg-mute);
-  padding-top:6px
+  font-weight:400;white-space:nowrap
 }
 section h2{
   font-family:var(--sans);font-size:clamp(20px,2.2vw,25px);font-weight:650;letter-spacing:-.01em;
@@ -627,7 +627,7 @@ th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vert
 th{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-mute);background:var(--panel)}
 tr:last-child td{border-bottom:0}
 
-.quad{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:34px 0 8px}
+.quad{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:34px 0 8px}
 .q{background:linear-gradient(180deg,var(--panel) 0%,var(--bg-2) 100%);border:1px solid var(--line);border-top:2px solid var(--line-2);border-radius:8px;padding:16px 18px}
 .q.open{border-top-color:var(--open)} .q.blind{border-top-color:var(--blind)}
 .q.hidden{border-top-color:var(--hidden)} .q.unknown{border-top-color:var(--unknown)}
@@ -638,17 +638,22 @@ tr:last-child td{border-bottom:0}
 .q .empty{font-size:13px;color:var(--fg-mute);font-style:italic}
 
 .options{margin:6px 0 0;display:flex;flex-direction:column;gap:10px}
-.livebar{margin:10px 0 0;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--dim)}
-.asknote{display:flex;flex-direction:column;gap:6px;margin:14px 0 12px;font-size:13px;color:var(--dim)}
-.asknote textarea{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;resize:vertical}
-.asknote textarea:focus{outline:none;border-color:var(--accent)}
+.livebar{margin:10px 0 0;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--fg-dim)}
+.livebar:empty{display:none;margin:0;padding:0;border:0}
+textarea.asknote{
+  display:block;width:100%;box-sizing:border-box;margin:14px 0 12px;min-height:44px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--fg);
+  font:inherit;font-size:13.5px;line-height:1.5;resize:vertical
+}
+textarea.asknote::placeholder{color:var(--fg-mute)}
+textarea.asknote:focus{outline:none;border-color:var(--accent-dim)}
 .livebar.ok{border-color:var(--open);color:var(--open)}
 .livebar.warn{border-color:var(--hidden);color:var(--hidden)}
 .opt.picked{border-color:var(--open);box-shadow:inset 0 0 0 1px var(--open)}
 .opt.done{opacity:.55}
 .opt.done.picked{opacity:1}
 .opt{
-  display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start;
+  display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start;
   background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:15px 17px;
   cursor:pointer;transition:border-color .13s ease,background .13s ease,transform .13s ease;text-align:left;
   font:inherit;color:inherit;width:100%
@@ -665,12 +670,6 @@ tr:last-child td{border-bottom:0}
   color:var(--accent);border:1px solid var(--accent-dim)
 }
 .copy{font-family:var(--mono);font-size:10.5px;color:var(--fg-mute);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap;padding-top:4px}
-
-.hint{
-  margin-top:26px;padding:15px 18px;border:1px dashed var(--line-2);border-radius:8px;
-  font-size:13.5px;color:var(--fg-dim);background:color-mix(in oklab,var(--panel) 55%,transparent)
-}
-.hint b{color:var(--fg)}
 
 .qlist{display:flex;flex-direction:column;gap:16px;margin:4px 0 0}
 .qitem{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
@@ -805,6 +804,13 @@ tr:last-child td{border-bottom:0}
 .loopback svg .dash{stroke:currentColor;stroke-width:1.4;fill:none;stroke-dasharray:5 4;stroke-linecap:round}
 .loopback svg .head{fill:currentColor;stroke:none}
 .loopback span{align-self:center;line-height:1.5}
+@media (max-width:1000px){
+  .quad{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:640px){
+  .quad{grid-template-columns:1fr}
+  section h2{font-size:20px}
+}
 @media (max-width:720px){.loopback svg{width:100%!important}}
 
 /* facts */
@@ -907,8 +913,7 @@ footer{
 #toast.on{opacity:1;transform:translate(-50%,0)}
 @media (max-width:720px){
   .wrap,.topbar .inner{padding-left:18px;padding-right:18px}
-  section{grid-template-columns:1fr;gap:10px;padding:28px 0}
-  .num{border:0;padding:0}
+  section{padding:28px 0}
   header.hero{padding:40px 0 28px}
   .shots{grid-template-columns:1fr}
 }
@@ -972,7 +977,7 @@ function renderQuestions(spec: PageSpec): string {
 </div>`;
 		})
 		.join("\n");
-	return `<section><div class="num">?</div><div class="body"><h2>逐题单选 / one per group</h2>
+	return `<section class="s"><div class="body"><h2>逐题单选</h2>
 <div class="qlist" data-kind="${spec.kind}" data-prefix="${esc(kindPrefix(spec))}">${items}</div>
 <div class="receipt">
   <div class="rl">答案回执</div>
@@ -999,17 +1004,13 @@ function renderOptions(spec: PageSpec, live?: PageMeta["live"]): string {
     ${o.detail ? `<span class="detail">${inline(o.detail)}</span>` : ""}
     ${o.cost ? `<span class="cost">${esc(o.cost)}</span>` : ""}
   </span>
-  <span class="copy">复制回执</span>
 </button>`,
 		)
 		.join("\n");
-	return `<section><div class="num">→</div><div class="body"><h2>请选择 / Your call</h2>
-${live ? '<label class="asknote"><span>想补一句理由？（可不写）</span><textarea id="asknote" rows="2" maxlength="400" placeholder="例如：先做这个，因为线上已经卡住了"></textarea></label>' : ""}
+	return `<section class="s"><div class="body"><h2>选择</h2>
+${live ? '<textarea class="asknote" id="asknote" rows="2" maxlength="400" aria-label="补充一句理由（可不写）" placeholder="想补一句理由？（可不写）"></textarea>' : ""}
 <div class="options" data-kind="${spec.kind}">${rows}</div>
-${live ? '<div class="livebar" id="livebar" role="status">点一项就直接作答，对话那边会收到，不用复制粘贴。</div>' : ""}
-<div class="hint">${live
-		? "这一页只有这一次有效：点完就回到对话看下一步。想改主意，在回执后面补充你的条件再发一次。"
-		: "点任意一项会把回执复制到剪贴板，<b>直接粘贴回 Pi 发送</b>即可。想改主意就在回执后面补充你的条件。"}</div>
+${live ? '<div class="livebar" id="livebar" role="status"></div>' : ""}
 </div></section>`;
 }
 
@@ -1403,8 +1404,7 @@ function renderPageInner(
 			]
 				.filter(Boolean)
 				.join("\n");
-			return `<section class="s${tone}" id="s${idx + 1}"><div class="num">${String(idx + 1).padStart(2, "0")}</div>
-<div class="body"><h2>${esc(s.heading)}</h2>${body || '<p class="empty">—</p>'}</div></section>`;
+			return `<section class="s${tone}" id="s${idx + 1}"><div class="body"><h2><span class="num">${String(idx + 1).padStart(2, "0")}</span>${esc(s.heading)}</h2>${body || '<p class="empty">—</p>'}</div></section>`;
 		})
 		.join("\n");
 

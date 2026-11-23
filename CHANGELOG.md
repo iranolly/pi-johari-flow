@@ -4,6 +4,27 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.4.2] — 2026-11-23
+
+The page read as two columns bolted together: a 64px rail of numbers, a gap, then the text — with
+the section's rule running under both. And it explained itself in sentences under every block.
+
+### Changed
+
+- **One column.** The number rides the heading (a small mono `01` before the title) instead of
+  sitting in its own rail, so nothing is visually split.
+- **The Johari panel is four across** on a wide page, two at ≤1000px, one at ≤640px — no more three
+  plus one orphan.
+- **The page describes itself by layout, not by prose.** Removed: the "点一项就直接作答…" line, the
+  "这一页只有这一次有效…" box, the clipboard explanation, the "复制回执" label on every option, the
+  "想补一句理由？（可不写）" label (the placeholder says it), and the English half of the section
+  headings. The live status bar now stays invisible until it has something to report.
+- The reason box is a full-width field with the placeholder as its only instruction.
+
+### Tests
+
+- 99 checks, unchanged: the page still parses, carries the wire and the note field.
+
 ## [0.4.1] — 2026-11-23
 
 A click said *what*, never *why*.
