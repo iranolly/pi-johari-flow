@@ -4,6 +4,31 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-11-23
+
+The question was a dialog, and the page was a thing the user had to open by hand — or a tab that
+stole the screen.
+
+### Changed
+
+- **`flow_ask` now only arms the question.** It writes the decision page, opens the loopback wire
+  for that one question, streams the card, and returns. Nothing opens, nothing blocks.
+- **`flow_wait` is new**: it waits for the click on the page and returns the chosen option. The pair
+  exists so the page link can sit in the agent's own reply — Pi Web opens a local link from the
+  agent's prose in its own file panel (which renders the page and runs its script), while a link in
+  a tool result only opens a new tab.
+- No picker by default, no focus stealing, no extra tab. The host's picker remains the fallback when
+  the wire cannot be opened at all.
+- Guidance, skill, protocol, README and `docs/interaction.md` describe the two-step and why the link
+  must be in the reply.
+- An open question is capped at 20 minutes; `flow_wait` gives up after its own timeout (default 600 s)
+  and hands the question back untouched instead of guessing.
+
+### Tests
+
+- 98 checks: I9–I11 arming and the link, I12–I14 timeout and cleanup, I15 a click on the written page
+  comes back as the decision (the HTML's own endpoint and token are used).
+
 ## [0.3.0] — 2026-11-23
 
 A question was only a dialog: the reason and the price sat in a page nobody opened.

@@ -114,7 +114,7 @@ export function buildProtocol(state: FlowState, dispatch: string[] = []): string
 		"",
 		"### 工具契约",
 		"- `flow_page` 生成 HTML 展示页（intent / decision / report），并在同目录写一份同名 `.json` 配置记录。默认**不**打开浏览器：把返回的打开地址原样贴给用户。",
-		"- `flow_ask` 向用户提一个决策问题：默认在对话里弹选择框（没看这个会话时界面会提示），选项自带代价；用户明确要「在页面上点」时才传 `open: true`。",
+		"- `flow_ask` 只**准备**一道题：写决策页、开一条只活这道题的本机通道，然后立刻返回。接着把返回里的 `[打开完整说明](路径)` 原样写进你的回复（链接只有放在回复里才会在 pi-web 的面板里打开，放工具结果里会开新标签），再调用 `flow_wait` 等用户点选。",
 		"- `flow_plan` 推进/查看/终止流程。**不要**在没完成本阶段职责时推进。",
 		"- 派发 sub agent：" +
 			(dispatch.length

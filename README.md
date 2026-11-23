@@ -62,7 +62,8 @@ can only be produced in `execute` or `report`.
 | --- | --- |
 | `flow_plan` | `start` / `setGoal` / `status` / `advance` / `confirm` / `approve` / `abort` |
 | `flow_page` | intent, decision and report pages (HTML, offline) |
-| `flow_ask` | one decision: an in-chat picker whose choices carry their cost, so it works without a page — `open:true` switches to the page-first mode; returns `answered:false` in `-p` / JSON mode |
+| `flow_ask` | arms one decision: writes the page and opens a one-question loopback wire, then returns without blocking |
+| `flow_wait` | collects that decision: waits for the click on the page and returns the chosen option |
 | `/flow` | `status` · `start <goal>` · `approve` · `report` · `abort` |
 
 `setGoal` re-opens the intent phase (goal changes void the old confirmation). It is refused
@@ -119,13 +120,13 @@ Report pages are written for people who never read code: no code blocks, no file
 - **[How a question should work](./docs/interaction.md)** — what pi and pi-web can actually do
   (dialogs, the orange dot and sound, widgets, chat cards, the file panel) and the three-layer
   plan built on it.
-- **Asking does not hijack the browser.** By default `flow_ask` asks in the chat: the picker is the
-  dialog the host already shows for pending questions (Pi Web rings and dots it), and every choice
-  carries its cost. A page is still written as an artifact, but nothing opens it.
-- **Answering on the page is opt-in.** With `open:true` the tool starts a loopback-only listener for
-  exactly one question, bakes its address and a random token into the page, and opens it. Clicking
-  an option posts the id back and the tool returns it — no copy, no paste. The listener dies with
-  the question; a page that outlives it is a read-only archive and says so.
+- **Ask, link, wait.** `flow_ask` writes the decision page and opens a loopback wire for exactly one
+  question, then returns. The agent copies the page link into its own reply — Pi Web opens a local
+  link from the agent's prose in its own file panel, which renders the page and runs its script —
+  and calls `flow_wait`, which returns the clicked option. The wire dies with the question; a page
+  that outlives it is a read-only archive and says so.
+- **No dialog, no new tab, no stolen focus.** The question is a card in the conversation plus the
+  page in the panel the user already has. If the wire cannot open, the host picker is the fallback.
 - **UI is optional.** In `-p` / JSON mode `flow_ask` reports that it could not ask instead of
   pretending, and `flow_page` writes the page without launching a browser.
 

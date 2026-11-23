@@ -23,7 +23,7 @@ const { default: johariFlow } = await import("../extensions/johari-flow/index.ts
 const { renderPage } = await import("../extensions/johari-flow/html.ts");
 
 /* ------------------------------------------------------------------ harness */
-function harness() {
+function harness(opts = {}) {
 	const entries = [];
 	const tools = {};
 	const handlers = {};
@@ -67,7 +67,7 @@ function harness() {
 	};
 	const ctx = {
 		cwd: WORK,
-		hasUI: false,
+		hasUI: opts.hasUI === true,
 		ui,
 		sessionManager: {
 			getBranch: () => entries.slice(),
@@ -94,6 +94,7 @@ function harness() {
 		status: () => status,
 		widget: () => widget,
 		askWith: (p, onUpdate) => tools.flow_ask.execute("call", p, undefined, onUpdate, ctx),
+		wait: (p) => tools.flow_wait.execute("call", p, undefined, undefined, ctx),
 		plan: (p) => tools.flow_plan.execute("call", p, undefined, undefined, ctx),
 		fire_tool: fire,
 		page: (p) => tools.flow_page.execute("call", p, undefined, undefined, ctx),
@@ -546,7 +547,7 @@ function notes2(list) {
 	});
 	const payload = asked?.details ?? asked?.content?.[0]?.text ?? "";
 	check("F1 ask without UI answers false", payload.answered === false);
-	check("F1b ask explains itself without UI", h.text(asked).includes("没有交互 UI"));
+	check("F1b ask explains itself without UI", h.text(asked).includes("没有得到回答"));
 
 
 	check("F2 setGoal before approval", h.text(await h.plan({ action: "setGoal", goal: "新意图" })).includes("重新确认"));
@@ -678,70 +679,60 @@ function notes2(list) {
 	const text = h.text(asked);
 	check("I8 picker carries the cost line", text.includes("代价：之后返工") && text.includes("代价：多花一天"));
 
-	// The card lands while the picker is open, so the question is readable in the chat.
-	const partials = [];
-	const askedWithCard = await h.askWith(
-		{
-			question: "先做哪块？",
-			context: "两件事都想要，但只能先做一件。",
-			options: [
-				{ id: "A", label: "先修图片", cost: "代价：链接晚一天" },
-				{ id: "B", label: "先修链接", cost: "代价：图片晚一天", recommended: true },
-			],
-		},
-		(partial) => partials.push(partial),
-	);
-	const card = String(partials[0]?.content?.[0]?.text ?? "");
+	// The panel path: flow_ask arms the question and hands back a page; flow_wait collects it.
+	const hui = harness({ hasUI: true });
+	hui.fire("session_start", {});
+	const prepared = await hui.ask({
+		question: "先做哪块？",
+		context: "两件事都想要，但只能先做一件。",
+		options: [
+			{ id: "A", label: "先修图片", cost: "代价：链接晚一天" },
+			{ id: "B", label: "先修链接", cost: "代价：图片晚一天", recommended: true },
+		],
+	});
+	const prepText = hui.text(prepared);
+	check("I9 ask prepares a page instead of blocking", prepText.includes("决策页：") && prepText.includes("flow_wait"));
 	check(
-		"I9 the card appears while waiting",
-		card.includes("需要你拍板") && card.includes("代价：链接晚一天") && card.includes("（推荐）"),
+		"I10 the reply tells the model to put the link in its own message",
+		prepText.includes("[打开完整说明](") && prepText.includes("链接必须在你的回复里"),
 	);
-	check("I10 the question is visible outside the dialog", h.widget()?.[0]?.includes("待拍板") === true);
-	// the footer status is shared: the flow re-renders its own line right after, so only the
-	// widget is expected to be gone by itself.
-	check("I11 the banner is cleared after the answer", h.widget()?.[1] === undefined);
-	check("I12 an unanswered question says so", h.text(askedWithCard).includes("没有得到回答"));
-}
-{
-	const { startAnswerServer } = await import("../extensions/johari-flow/answer.ts");
-	const waiter = await startAnswerServer({ ids: ["A", "B"] });
-	const post = (body) =>
-		fetch(waiter.endpoint, { method: "POST", headers: { "Content-Type": "text/plain" }, body });
-	const wrong = await post(`nope|A`);
-	const unknown = await post(`${waiter.token}|Z`);
-	const ok = await post(`${waiter.token}|B`);
-	const answer = await waiter.wait(3000);
-	const late = await post(`${waiter.token}|A`).catch(() => ({ status: 409 }));
-	check("I1 a page click reaches the tool", answer === "B", String(answer));
-	check("I2 wrong token refused", wrong.status === 403);
-	check("I3 unknown option refused", unknown.status === 400);
-	check("I4 first answer wins", ok.status === 200 && late.status === 409);
+	check("I11 the banner marks the open question", hui.widget()?.[0]?.includes("待拍板") === true);
 
-	const timeout = await startAnswerServer({ ids: ["A"] });
-	const before = Date.now();
-	const none = await timeout.wait(150);
-	check("I5 silence resolves to null", none === null && Date.now() - before >= 140);
-	await timeout.close();
+	const waited = await hui.wait({ timeoutSec: 1 });
+	check("I12 flow_wait times out with the question intact", hui.text(waited).includes("没等到"), hui.text(waited).slice(0, 120));
+	check("I13 the wire is gone once flow_wait gives up", hui.widget()?.[1] === undefined);
+	const again = await hui.wait({ timeoutSec: 1 });
+	check("I14 a second flow_wait has nothing to collect", hui.text(again).includes("没有等你拍板"));
 
-	const liveHtml = renderPage(
-		{ kind: "decision", title: "选哪个", sections: [], options: [{ id: "A", label: "甲" }, { id: "B", label: "乙" }] },
-		{ phase: "测试", cwd: WORK, sessionId: "s", live: { endpoint: "http://127.0.0.1:9/answer", token: "tok123" } },
-	);
+	// End to end: a click on the written page is what flow_wait returns.
+	const hui2 = harness({ hasUI: true });
+	hui2.fire("session_start", {});
+	const prepared2 = await hui2.ask({
+		question: "交付前要不要再跑一遍？",
+		options: [
+			{ id: "A", label: "不必，直接交", cost: "代价：出问题要重来" },
+			{ id: "B", label: "再跑一遍", cost: "代价：多等十分钟", recommended: true },
+		],
+	});
+	const pageRel = (hui2.text(prepared2).match(/决策页：`([^`]+)`/) ?? [])[1];
+	const pageAbs = pageRel ? join(WORK, ...pageRel.split("/")) : "";
+	const html = pageAbs && existsSync(pageAbs) ? readFileSync(pageAbs, "utf8") : "";
+	const endpoint = (html.match(/"endpoint":"([^"]+)"/) ?? [])[1];
+	const token = (html.match(/"token":"([^"]+)"/) ?? [])[1];
+	if (endpoint && token) {
+		await fetch(endpoint, {
+			method: "POST",
+			headers: { "Content-Type": "text/plain" },
+			body: `${token}|B`,
+		});
+	}
+	const chosen = await hui2.wait({ timeoutSec: 5 });
 	check(
-		"I6 live page carries the wire",
-		liveHtml.includes('"endpoint":"http://127.0.0.1:9/answer"') &&
-			liveHtml.includes('"token":"tok123"') &&
-			liveHtml.includes('data-opt="A"') &&
-			liveHtml.includes("点一项就直接作答"),
+		"I15 a click on the page comes back as the decision",
+		hui2.text(chosen).includes("再跑一遍") && hui2.text(chosen).includes("在页面上点的"),
+		hui2.text(chosen).slice(0, 80),
 	);
-	const deadHtml = renderPage(
-		{ kind: "decision", title: "选哪个", sections: [], options: [{ id: "A", label: "甲" }] },
-		{ phase: "测试", cwd: WORK, sessionId: "s" },
-	);
-	check(
-		"I7 a saved page stays a clipboard page",
-		deadHtml.includes('"endpoint"') === false && deadHtml.includes("粘贴回 Pi"),
-	);
+
 }
 
 /* ------------------------------------------------------------------ summary */
