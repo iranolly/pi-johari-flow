@@ -791,7 +791,7 @@ const pendingAsks = new Map<string, PendingAsk>();
 const PREPARED_TTL_MS = 20 * 60 * 1000;
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.4.3";
+const PKG_VERSION = "0.4.4";
 
 /* --------------------------------------------------------------------- init */
 
@@ -809,6 +809,21 @@ export default function johariFlow(pi: ExtensionAPI) {
 
 	pi.on("session_tree", async (_event, ctx) => {
 		reconstruct(ctx);
+	});
+
+	/**
+	 * A question must never hold the turn hostage: whatever the user types while one is
+	 * open *is* the answer — a pasted receipt, a bare "A", a whole sentence. It goes to
+	 * the waiter exactly like a click, so the turn continues at once instead of waiting
+	 * out a timeout the user cannot reach.
+	 */
+	pi.on("input", (event, ctx) => {
+		const text = String(event.text ?? "").trim();
+		if (!text || text.startsWith("/")) return;
+		const pending = pendingAsks.get(sessionSlug(ctx));
+		if (!pending) return;
+		const capped = text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
+		pending.waiter.submit({ id: capped, via: "chat" });
 	});
 
 	/* ------------------------------------------------- system prompt injection */
@@ -1597,8 +1612,13 @@ export default function johariFlow(pi: ExtensionAPI) {
 				}
 			};
 
-			let pick: { id: string; note?: string } | null = null;
-			const stop = () => pending.waiter.close();
+			let pick: { id: string; note?: string; via?: "page" | "chat" } | null = null;
+			const startedAt = Date.now();
+			let interrupted = false;
+			const stop = () => {
+				interrupted = true;
+				pending.waiter.close();
+			};
 			_signal?.addEventListener("abort", stop, { once: true });
 			try {
 				pick = await pending.waiter.wait(seconds * 1000);
@@ -1612,16 +1632,40 @@ export default function johariFlow(pi: ExtensionAPI) {
 			}
 
 			if (!pick) {
+				const waited = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
 				persist(pi, ctx);
 				return reply(
 					[
-						`没等到你在页面上点选（${seconds} 秒）。问题还在：`,
+						interrupted
+							? "这个问题被你打断了（或者你发了新消息），页面上的按钮已经失效。问题还在："
+							: `等了 ${waited} 秒，页面上没有回话。问题还在：`,
 						`**${pending.question}**`,
 						...pending.labels.map((l) => `- ${l}`),
 						"",
-						"请把这道题用自然语言直接问用户，拿到回答后再继续；不要替用户选。",
+						"不要替用户选。用户现在可以直接在对话里回一句（比重新开页面快），或者你重出一张页面。",
 					].join("\n"),
-					{ answered: false },
+					{ answered: false, waitedSec: waited },
+				);
+			}
+			if (pick.via === "chat") {
+				// Pasted into the chat box while the wire was open: same weight as a click.
+				const text = String(pick.id).trim();
+				state.decisions.push({
+					question: pending.question,
+					answer: text,
+					options: pending.labels,
+					at: nowIso(),
+				});
+				persist(pi, ctx);
+				return reply(
+					[
+						"用户直接在对话里回答了：",
+						"",
+						text,
+						"",
+						"下一步：按这个回答继续，不要再开一张页面问同一件事。",
+					].join("\n"),
+					{ answered: true, receipt: text, via: "chat" },
 				);
 			}
 			const picked = pending.receipt ? undefined : pending.options.find((o) => o.id === pick.id);

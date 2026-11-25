@@ -18,6 +18,8 @@ export interface AnswerPick {
 	id: string;
 	/** One optional line the user typed while choosing; already trimmed and capped. */
 	note?: string;
+	/** Where the answer came from: the page click, or the chat box. */
+	via?: "page" | "chat";
 }
 
 export interface AnswerWaiter {
@@ -27,6 +29,8 @@ export interface AnswerWaiter {
 	token: string;
 	/** Resolve with the chosen option (and any note the user typed), or null. */
 	wait(ms: number): Promise<AnswerPick | null>;
+	/** Hand an answer in from another surface (the chat box), exactly like a page click. */
+	submit(pick: AnswerPick): void;
 	/** Stop listening and drop every open connection. */
 	close(): void;
 }
@@ -124,7 +128,7 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 						send(res, 400, "empty receipt");
 						return;
 					}
-					finish({ id: text });
+					finish({ id: text, via: "page" });
 					send(res, 200, "ok");
 					return;
 				}
@@ -134,7 +138,7 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 					return;
 				}
 				const note = (rawNote ?? "").trim().slice(0, 600) || undefined;
-				finish({ id, note });
+				finish({ id, note, via: "page" });
 				send(res, 200, `ok:${id}`);
 			})
 			.catch(() => send(res, 400, "bad body"));
@@ -170,6 +174,11 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 	return {
 		endpoint: `http://127.0.0.1:${port}/answer`,
 		token,
+		submit(pick: AnswerPick): void {
+			// The chat box is just another surface: same answer, same close.
+			finish(pick);
+			close();
+		},
 		async wait(ms: number): Promise<AnswerPick | null> {
 			let timer: NodeJS.Timeout | undefined;
 			const timeout = new Promise<null>((resolve) => {

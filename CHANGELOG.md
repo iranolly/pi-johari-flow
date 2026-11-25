@@ -4,6 +4,27 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.4.4] — 2026-11-25
+
+A page that could not reach the wire froze the whole turn: the person pasted the receipt into the
+chat, and it sat queued until the wait timed out (or until they pressed stop).
+
+### Fixed
+
+- **While a question is open, anything typed in the chat is the answer.** The `input` hook hands it
+  to the waiter, and `flow_wait` returns at once with "用户直接在对话里回答了：…". No more waiting
+  out the clock just to say A.
+- **The timeout line tells the truth**: the seconds actually waited, or "你把这个问题打断了" when
+  the turn was stopped — instead of always claiming the number the caller asked for.
+- Verified the page click in a real Chromium, two ways: a `file://` tab and a `srcdoc` iframe with
+  `sandbox="allow-scripts"` (what pi-web's panel does). Both deliver the pick, so the wire was
+  never the problem — the link form was.
+
+### Tests
+
+- 108 checks (was 105): I23 a chat answer resolves an open question and is recorded as a decision,
+  I24 the timeout reports the real wait; I12 follows the new wording.
+
 ## [0.4.3] — 2026-11-25
 
 Only `flow_ask` got the two-step treatment in 0.4.0. Every page written by `flow_page` — the intent

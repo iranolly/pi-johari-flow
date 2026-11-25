@@ -699,7 +699,11 @@ function notes2(list) {
 	check("I11 the banner marks the open question", hui.widget()?.[0]?.includes("待拍板") === true);
 
 	const waited = await hui.wait({ timeoutSec: 1 });
-	check("I12 flow_wait times out with the question intact", hui.text(waited).includes("没等到"), hui.text(waited).slice(0, 120));
+	check(
+		"I12 flow_wait times out with the question intact",
+		hui.text(waited).includes("没有回话") && hui.text(waited).includes("先做哪块？"),
+		hui.text(waited).slice(0, 120),
+	);
 	check("I13 the wire is gone once flow_wait gives up", hui.widget()?.[1] === undefined);
 	const again = await hui.wait({ timeoutSec: 1 });
 	check("I14 a second flow_wait has nothing to collect", hui.text(again).includes("没有等你拍板"));
@@ -809,6 +813,37 @@ function notes2(list) {
 	);
 	const nothing = await hui5.wait({ timeoutSec: 1 });
 	check("I22 an archive page cannot be collected", hui5.text(nothing).includes("没有等你拍板"));
+
+	// A question must never hold the turn: typing in the chat is an answer too.
+	const hui6 = harness({ hasUI: true });
+	hui6.fire("session_start", {});
+	await hui6.ask({
+		question: "选哪个？",
+		options: [{ id: "A", label: "甲" }, { id: "B", label: "乙" }],
+	});
+	const waiting = hui6.wait({ timeoutSec: 30 });
+	await new Promise((r) => setTimeout(r, 120));
+	await hui6.fire("input", { text: "B" });
+	const chatPick = await waiting;
+	check(
+		"I23 typing in the chat answers the open question",
+		hui6.text(chatPick).includes("直接在对话里回答") && hui6.text(chatPick).includes("B"),
+		hui6.text(chatPick).slice(0, 60),
+	);
+	check("I23b a chat answer is recorded as a decision", (hui6.entries.at(-1)?.data?.decisions ?? []).length === 1);
+
+	const hui7 = harness({ hasUI: true });
+	hui7.fire("session_start", {});
+	await hui7.ask({
+		question: "再选一次？",
+		options: [{ id: "A", label: "甲" }, { id: "B", label: "乙" }],
+	});
+	const timedOut = await hui7.wait({ timeoutSec: 2 });
+	check(
+		"I24 the timeout reports the real wait, not the number asked for",
+		/等了 [0-9]+ 秒/.test(hui7.text(timedOut)) && !hui7.text(timedOut).includes("900"),
+		hui7.text(timedOut).split("\n")[0],
+	);
 
 }
 

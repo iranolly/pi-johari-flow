@@ -64,7 +64,7 @@ can only be produced in `execute` or `report`.
 | `flow_plan` | `start` / `setGoal` / `status` / `advance` / `confirm` / `approve` / `abort` |
 | `flow_page` | intent, decision and report pages (HTML, offline); a page with options or questions arms its own wire |
 | `flow_ask` | arms one decision: writes the page and opens a one-question loopback wire, then returns without blocking |
-| `flow_wait` | collects that decision: waits for the click on the page and returns the chosen option |
+| `flow_wait` | collects that decision: waits for the click on the page; anything typed in the chat answers too |
 | `/flow` | `status` · `start <goal>` · `approve` · `report` · `abort` |
 
 `setGoal` re-opens the intent phase (goal changes void the old confirmation). It is refused
