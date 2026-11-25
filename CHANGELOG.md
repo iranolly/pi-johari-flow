@@ -4,6 +4,32 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.4.5] — 2026-11-25
+
+Two pages were reported in one go: a click that never reached the agent, and a state diagram whose
+labels were printed on top of each other.
+
+### Fixed
+
+- **An answer with nobody collecting it no longer vanishes.** The inspected session shows the model
+  writing the link and ending its turn without calling `flow_wait`; the page then said "已记下" and
+  nothing happened. After a five-second grace the answer is now delivered to the session as a user
+  message (and recorded as a decision), so a forgotten `flow_wait` costs a few seconds, not the answer.
+- **The guidance names every caller.** `flow_wait`'s description and guidelines said "after flow_ask"
+  only; they now cover any `flow_page` that returned `awaiting: true`, and the tool result says so in
+  as many words.
+- **State diagrams measure before they draw.** Labels were capped at a fixed box width while SVG text
+  kept drawing at full length, so long labels spilled over their neighbours and the arrow captions
+  collided. Labels are now measured (CJK ≈ 12.6px, latin ≈ 6.9px), wrapped onto up to three lines,
+  and every gap is sized to the caption that sits in it.
+- The answering wire now closes itself when the answer arrives, so a forgotten `flow_wait` can no
+  longer keep the process (or the test runner) alive.
+
+### Tests
+
+- 110 checks (was 108): D4 long state labels wrap and boxes do not overlap; I25 an uncollected
+  answer is handed to the session.
+
 ## [0.4.4] — 2026-11-25
 
 A page that could not reach the wire froze the whole turn: the person pasted the receipt into the

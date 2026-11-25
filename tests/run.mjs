@@ -19,6 +19,8 @@ const WORK = join(repoRoot, ".pi", "test-work");
 rmSync(WORK, { recursive: true, force: true });
 mkdirSync(WORK, { recursive: true });
 
+// The unclaimed-answer grace is five seconds in real life; the suite must not wait that long.
+process.env.JOHARI_UNCLAIMED_GRACE_MS ??= "30";
 const { default: johariFlow } = await import("../extensions/johari-flow/index.ts");
 const { renderPage } = await import("../extensions/johari-flow/html.ts");
 
@@ -648,6 +650,43 @@ function notes2(list) {
 	check("G6 project file blocked in intent", h.blocked(code[0]));
 }
 
+/* -------------------------------------------------- G2. state diagram layout */
+{
+	// Long labels used to spill out of their box and collide with the next one: the box
+	// was capped and SVG text never wraps. Measure, wrap, then space the boxes to fit.
+	const html = renderPage(
+		{
+			kind: "report",
+			title: "t",
+			sections: [
+				{
+					heading: "h",
+					blocks: [
+						{
+							kind: "state",
+							states: [
+								{ id: "b", kind: "start", label: "修复前：刚建出来 → 失败（被数据库拦住）" },
+								{ id: "e", label: "兜底抛错 → 用户看到「系统错误」" },
+								{ id: "a", kind: "end", label: "修复后：刚建出来 → 失败（允许）" },
+							],
+							transitions: [
+								{ from: "b", to: "e", label: "任务没能启动" },
+								{ from: "e", to: "a", label: "新增规则放宽这条跳转" },
+							],
+						},
+					],
+				},
+			],
+		},
+		{ phase: "测试", cwd: WORK, sessionId: "s" },
+	);
+	const rects = [...html.matchAll(/<rect class="statebox[^"]*" x="([\d.-]+)" y="[\d.-]+" width="([\d.-]+)"/g)].map(
+		(m) => ({ x: Number(m[1]), w: Number(m[2]) }),
+	);
+	const overlap = rects.some((r, i) => i > 0 && rects[i - 1].x + rects[i - 1].w > r.x + 0.5);
+	check("D4 long state labels wrap instead of spilling", html.includes("<tspan") && rects.length === 3 && !overlap, JSON.stringify(rects));
+}
+
 /* ------------------------------------------------------------ H. release hygiene */
 {
 	// the version is written twice (package.json + the footer constant); prove they agree
@@ -843,6 +882,29 @@ function notes2(list) {
 		"I24 the timeout reports the real wait, not the number asked for",
 		/等了 [0-9]+ 秒/.test(hui7.text(timedOut)) && !hui7.text(timedOut).includes("900"),
 		hui7.text(timedOut).split("\n")[0],
+	);
+
+	// The model sometimes forgets flow_wait. A click must still reach the conversation.
+	const hui8 = harness({ hasUI: true });
+	hui8.fire("session_start", {});
+	const orphan = await hui8.page({
+		kind: "decision",
+		title: "没人等的问题",
+		options: [{ id: "A", label: "甲路" }, { id: "B", label: "乙路" }],
+	});
+	const orphanRel = (hui8.text(orphan).match(/\[打开完整说明\]\(([^)]+)\)/) ?? [])[1];
+	const orphanAbs = orphanRel ? join(WORK, ...orphanRel.split("/")) : "";
+	const orphanHtml = orphanAbs && existsSync(orphanAbs) ? readFileSync(orphanAbs, "utf8") : "";
+	const oEp = (orphanHtml.match(/"endpoint":"([^"]+)"/) ?? [])[1];
+	const oTk = (orphanHtml.match(/"token":"([^"]+)"/) ?? [])[1];
+	if (oEp && oTk) {
+		await fetch(oEp, { method: "POST", headers: { "Content-Type": "text/plain" }, body: `${oTk}|B|` });
+	}
+	await new Promise((r) => setTimeout(r, 400));
+	check(
+		"I25 an answer nobody collected is handed to the session",
+		hui8.sent.some((s) => String(s.content).includes("甲路") || String(s.content).includes("乙路")),
+		JSON.stringify(hui8.sent.map((s) => String(s.content).slice(0, 40))),
 	);
 
 }

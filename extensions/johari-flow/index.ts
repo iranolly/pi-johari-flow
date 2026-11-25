@@ -777,6 +777,8 @@ interface PendingAsk {
 	pageRel: string;
 	/** A page with N questions answers with one receipt (all groups), not one id. */
 	receipt?: boolean;
+	/** Someone is actually waiting on it (`flow_wait` started). */
+	claimed?: boolean;
 	timer?: NodeJS.Timeout;
 }
 
@@ -790,8 +792,54 @@ const pendingAsks = new Map<string, PendingAsk>();
 /** A wire nobody collects must not outlive the question it belongs to. */
 const PREPARED_TTL_MS = 20 * 60 * 1000;
 
+/** How long an answer waits for a collector before it is handed to the session. */
+const UNCLAIMED_GRACE_MS =
+	Number.parseInt(process.env.JOHARI_UNCLAIMED_GRACE_MS ?? "", 10) > 0
+		? Number.parseInt(process.env.JOHARI_UNCLAIMED_GRACE_MS ?? "", 10)
+		: 5000;
+
+/**
+ * An answer with nobody watching must not vanish. A page can be answered before
+ * `flow_wait` is called — or when the model forgets to call it at all, which happens —
+ * so after a short grace the answer is delivered as a user message instead.
+ */
+function watchUnclaimed(pi: ExtensionAPI, ctx: ExtensionContext, key: string, pending: PendingAsk): void {
+	pending.waiter.onAnswer((pick) => {
+		const timer = setTimeout(() => {
+			const live = pendingAsks.get(key);
+			if (!live || live !== pending || live.claimed) return;
+			pendingAsks.delete(key);
+			clearTimeout(live.timer);
+			const label = live.options.find((o) => o.id === pick.id)?.label;
+			const text = live.receipt || pick.via === "chat" || !label ? String(pick.id).trim() : `${pick.id}) ${label}`;
+			state.decisions.push({ question: live.question, answer: text, options: live.labels, at: nowIso() });
+			persist(pi, ctx);
+			try {
+				ctx.ui.setWidget("johari · 待拍板", undefined);
+				ctx.ui.setStatus("johari", undefined);
+			} catch {
+				/* fire-and-forget */
+			}
+			void Promise.resolve(
+				pi.sendUserMessage(
+					[
+						"[flow] 用户在页面上作答了，但当时没有人在等（`flow_wait` 没有被调用，或者已经退出）。",
+						`问题：${live.question}`,
+						`作答：${text}`,
+						"按这份作答继续；不要重开一张页面问同一件事。",
+					].join("\n"),
+					{ deliverAs: "followUp" },
+				),
+			).catch(() => {
+				/* no session to wake: the decision is already in the state */
+			});
+		}, UNCLAIMED_GRACE_MS);
+		timer.unref?.();
+	});
+}
+
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.4.4";
+const PKG_VERSION = "0.4.5";
 
 /* --------------------------------------------------------------------- init */
 
@@ -1301,6 +1349,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 				timer.unref?.();
 				pending.timer = timer;
 				pendingAsks.set(key, pending);
+				watchUnclaimed(pi, ctx, key, pending);
 				try {
 					ctx.ui.setWidget("johari · 待拍板", [
 						`⏳ 等你拍板：${params.title}`,
@@ -1323,7 +1372,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 					"",
 					"---",
 					waiter
-						? "**接下来必须做的一件事**：把上面那行链接原样写进你这条回复，然后 **立刻** 调用 `flow_wait` 等用户点选；页面上的选择就是答案，不需要复制回执。"
+						? "**接下来必须做的一件事**：把上面那行链接原样写进你这条回复，然后 **立刻** 调用 `flow_wait` 等用户点选。不调用它，页面上的点击就没有接收方（只剩一个几秒后自动送到对话的兜底）。"
 						: "**接下来必须做的一件事**：把上面那行链接原样写进你这条回复，请用户看完在对话里回你。这一页没有可提交的选项。",
 					"不要在同一轮里继续推进阶段。",
 				].join("\n"),
@@ -1503,6 +1552,7 @@ export default function johariFlow(pi: ExtensionAPI) {
 				timer.unref?.();
 				pending.timer = timer;
 				pendingAsks.set(key, pending);
+				watchUnclaimed(pi, ctx, key, pending);
 				try {
 					ctx.ui.setWidget("johari · 待拍板", [
 						`⏳ 等你拍板：${params.question}`,
@@ -1573,10 +1623,11 @@ export default function johariFlow(pi: ExtensionAPI) {
 		name: "flow_wait",
 		label: "Flow · 等用户点选",
 		description:
-			"等用户在决策页上点一项。调用 flow_ask 之后必须紧接着调用它（中间只写那条带链接的回复），返回就说明用户定了。",
-		promptSnippet: "等用户在决策页上点选并拿到答案",
+			"等用户在页面上点一项。`flow_ask` 之后，或任何返回了 awaiting:true 的 `flow_page` 之后，必须紧接着调用它（中间只写那条带链接的回复）；返回就说明用户定了。不调用它，页面上的点击就没人接。",
+		promptSnippet: "等用户在页面上点选并拿到答案",
 		promptGuidelines: [
 			"Call flow_wait right after flow_ask, once your reply carrying the page link is written.",
+			"Call flow_wait after ANY flow_page that returned `awaiting: true` (a page with options or questions). Without it the click has nobody to receive it.",
 			"While flow_wait runs, do not guess the answer or continue with the work.",
 		],
 		parameters: Type.Object({
@@ -1587,10 +1638,11 @@ export default function johariFlow(pi: ExtensionAPI) {
 			const pending = pendingAsks.get(key);
 			if (!pending) {
 				return reply(
-					"现在没有等你拍板的问题（可能已经答过、已超时，或者根本没调用 flow_ask）。先看流程状态，不要凭空继续。",
+					"现在没有等你拍板的问题（可能已经答过、已超时，或者根本没调用 flow_ask / 没出带选项的页面）。先看流程状态，不要凭空继续。",
 					{ answered: false },
 				);
 			}
+			pending.claimed = true;
 			const seconds = Math.min(Math.max(Number(params.timeoutSec ?? 600) || 600, 1), 3600);
 			try {
 				ctx.ui.setWidget("johari · 待拍板", [

@@ -31,6 +31,12 @@ export interface AnswerWaiter {
 	wait(ms: number): Promise<AnswerPick | null>;
 	/** Hand an answer in from another surface (the chat box), exactly like a page click. */
 	submit(pick: AnswerPick): void;
+	/**
+	 * Hear the answer even if nobody is collecting it yet. A page can be answered
+	 * before `flow_wait` is called (or when it is never called at all) — the answer
+	 * must not be lost in that gap.
+	 */
+	onAnswer(cb: (pick: AnswerPick) => void): void;
 	/** Stop listening and drop every open connection. */
 	close(): void;
 }
@@ -83,6 +89,7 @@ function readBody(req: IncomingMessage, limit = 4096): Promise<string> {
 export async function startAnswerServer(opts: AnswerServerOptions): Promise<AnswerWaiter> {
 	const ids = new Set(opts.ids ?? []);
 	const receipt = opts.receipt === true;
+	const watchers: Array<(pick: AnswerPick) => void> = [];
 	const token = randomBytes(16).toString("hex");
 	let settled = false;
 	let resolveAnswer: (pick: AnswerPick | null) => void = () => {};
@@ -93,8 +100,33 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 	const finish = (pick: AnswerPick | null) => {
 		if (settled) return;
 		settled = true;
+		if (pick) {
+			for (const cb of watchers) {
+				try {
+					cb(pick);
+				} catch {
+					/* a listener must never break the answer */
+				}
+			}
+		}
 		resolveAnswer(pick);
 	};
+
+	let closed = false;
+	/**
+	 * One question, one listener, one life: the server dies with the answer even when
+	 * nobody is collecting it, so a forgotten `flow_wait` cannot keep the process open.
+	 */
+	function close(): void {
+		if (closed) return;
+		closed = true;
+		finish(null);
+		server.close();
+		server.closeIdleConnections?.();
+		// A response may still be on the wire; give it a beat before the hard stop.
+		const kill = setTimeout(() => server.closeAllConnections?.(), 200);
+		kill.unref?.();
+	}
 
 	const server: Server = createServer((req, res) => {
 		const url = (req.url ?? "").split("?")[0];
@@ -130,6 +162,7 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 					}
 					finish({ id: text, via: "page" });
 					send(res, 200, "ok");
+					close();
 					return;
 				}
 				const [id, rawNote] = rest;
@@ -140,6 +173,7 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 				const note = (rawNote ?? "").trim().slice(0, 600) || undefined;
 				finish({ id, note, via: "page" });
 				send(res, 200, `ok:${id}`);
+				close();
 			})
 			.catch(() => send(res, 400, "bad body"));
 	});
@@ -159,18 +193,6 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 		throw new Error("答案监听端口没有拿到");
 	}
 
-	let closed = false;
-	const close = () => {
-		if (closed) return;
-		closed = true;
-		finish(null);
-		server.close();
-		server.closeIdleConnections?.();
-		// A response may still be on the wire; give it a beat before the hard stop.
-		const kill = setTimeout(() => server.closeAllConnections?.(), 200);
-		kill.unref?.();
-	};
-
 	return {
 		endpoint: `http://127.0.0.1:${port}/answer`,
 		token,
@@ -178,6 +200,9 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 			// The chat box is just another surface: same answer, same close.
 			finish(pick);
 			close();
+		},
+		onAnswer(cb: (pick: AnswerPick) => void): void {
+			watchers.push(cb);
 		},
 		async wait(ms: number): Promise<AnswerPick | null> {
 			let timer: NodeJS.Timeout | undefined;

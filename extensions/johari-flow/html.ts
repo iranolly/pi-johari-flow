@@ -1203,62 +1203,101 @@ function renderGraph(nodes: GraphNode[], edges: GraphEdge[]): string {
 }
 
 function renderState(states: StateNode[], transitions: StateTransition[]): string {
-	const n = Math.max(1, states.length);
-	const step = Math.max(130, Math.min(210, Math.round(920 / n)));
-	const pad = 28;
-	const width = pad * 2 + step * (n - 1) + 150;
+	if (!states.length) {
+		return `<div class="blk callout warn"><div class="ct">状态图没有状态</div><div class="cx">state 块需要 states 数组；空图不画空框。</div></div>`;
+	}
+	const n = states.length;
+	const pad = 24;
+	const MAXBOX = 190;
+	// SVG text does not wrap, so a long label used to spill over its box and collide with
+	// the next one. Measure in pixels (CJK ≈ 12.6, latin ≈ 6.9) and wrap before sizing.
+	const measure = (t: string): number => {
+		let w = 0;
+		for (const ch of t) w += /[\u2e80-\u9fff\uff00-\uffef]/.test(ch) ? 12.6 : 6.9;
+		return w;
+	};
+	const wrap = (t: string, maxW: number): string[] => {
+		const out: string[] = [];
+		let cur = "";
+		for (const ch of t) {
+			if (cur && measure(cur + ch) > maxW - 12) {
+				out.push(cur);
+				cur = ch;
+			} else cur += ch;
+		}
+		if (cur) out.push(cur);
+		if (!out.length) return [""];
+		if (out.length <= 3) return out;
+		return [out[0], out[1], `${out.slice(2).join("")}…`];
+	};
+	const linesArr = states.map((s) => wrap(String(s.label ?? ""), MAXBOX));
+	const widths = linesArr.map((ls) => Math.min(MAXBOX, Math.max(84, Math.max(...ls.map(measure)) + 26)));
+	const maxLines = Math.max(1, ...linesArr.map((l) => l.length));
+	const boxH = Math.max(32, 10 + maxLines * 16);
 	const idx = new Map(states.map((s, i) => [s.id, i]));
-	const cx = (i: number) => pad + 74 + i * step;
-	const widths = states.map((s) => Math.min(step - 18, Math.max(78, s.label.length * 13 + 26)));
-	const half = (i: number) => widths[i] / 2;
 
 	// 先把每条跳转分配一条「上方的弧道」，避免弧线互相压住
-	type Arc = { t: StateTransition; a: number; b: number; lift: number };
+	type Arc = { a: number; b: number; lift: number };
 	const arcs: Arc[] = [];
 	let lane = 0;
 	for (const t of transitions) {
 		const a = idx.get(t.from);
 		const b = idx.get(t.to);
 		if (a === undefined || b === undefined) continue;
-		const forwardAdjacent = b - a === 1;
-		if (forwardAdjacent) continue;
+		if (b - a === 1) continue;
 		const span = Math.abs(b - a);
-		arcs.push({ t, a, b, lift: 48 + Math.min(58, span * 9) + lane * 30 });
+		arcs.push({ a, b, lift: 46 + Math.min(58, span * 9) + lane * 28 });
 		lane += 1;
 	}
 	const maxLift = arcs.reduce((m, x) => Math.max(m, x.lift), 0);
-	const baseY = 24 + (maxLift ? maxLift + 18 : 14);
-	const height = Math.round(baseY + 22 + 20);
+
+	// Horizontal positions: every gap is wide enough for the label that sits in it.
+	const cx: number[] = [pad + widths[0] / 2];
+	for (let i = 1; i < n; i += 1) {
+		const pair = transitions.find((t) => idx.get(t.from) === i - 1 && idx.get(t.to) === i);
+		const labelW = pair?.label ? measure(String(pair.label)) : 0;
+		const gap = Math.max(36, labelW + 26);
+		cx[i] = cx[i - 1] + widths[i - 1] / 2 + gap + widths[i] / 2;
+	}
+	const width = Math.round(cx[n - 1] + widths[n - 1] / 2 + pad);
+	const baseY = 26 + (maxLift ? maxLift + 14 : 0);
+	const height = Math.round(baseY + boxH / 2 + 18);
 	const arrowId = `st${++figSeq}`;
 
 	const boxes = states
 		.map((s, i) => {
 			const w = widths[i];
-			return `<rect class="statebox ${s.kind ?? "plain"}" x="${cx(i) - w / 2}" y="${baseY - 16}" width="${w}" height="32" rx="16"/><text class="nodetext" x="${cx(i)}" y="${baseY + 4}" text-anchor="middle">${esc(s.label)}</text>`;
+			const lines = linesArr[i];
+			const top = baseY - boxH / 2;
+			const firstY = top + (boxH - (lines.length - 1) * 16) / 2 + 4;
+			const spans = lines
+				.map((ln, k) => `<tspan x="${cx[i]}" ${k ? 'dy="16"' : ""}>${esc(ln)}</tspan>`)
+				.join("");
+			return `<rect class="statebox ${s.kind ?? "plain"}" x="${Math.round(cx[i] - w / 2)}" y="${Math.round(top)}" width="${Math.round(w)}" height="${boxH}" rx="10"/><text class="nodetext" x="${Math.round(cx[i])}" y="${Math.round(firstY)}" text-anchor="middle">${spans}</text>`;
 		})
 		.join("");
 
 	const arcByKey = new Map(arcs.map((x) => [`${x.a}>${x.b}`, x]));
-	const used = new Set<string>();
 	const lines = transitions
 		.map((t) => {
 			const a = idx.get(t.from);
 			const b = idx.get(t.to);
 			if (a === undefined || b === undefined) return "";
-			const label = t.label ? esc(t.label) : "";
-			const x1 = cx(a);
-			const x2 = cx(b);
+			const label = t.label ? esc(String(t.label)) : "";
+			const x1 = cx[a];
+			const x2 = cx[b];
 			if (b - a === 1) {
-				used.add(`${a}>${b}`);
-				return `<line class="transline" x1="${x1 + half(a) + 6}" y1="${baseY}" x2="${x2 - half(b) - 8}" y2="${baseY}" marker-end="url(#${arrowId})"/><text class="transtext" x="${(x1 + x2) / 2}" y="${baseY - 10}" text-anchor="middle">${label}</text>`;
+				const lx = Math.round(x1 + widths[a] / 2 + 6);
+				const rx = Math.round(x2 - widths[b] / 2 - 8);
+				return `<line class="transline" x1="${lx}" y1="${baseY}" x2="${rx}" y2="${baseY}" marker-end="url(#${arrowId})"/><text class="transtext" x="${Math.round((lx + rx) / 2)}" y="${baseY - 9}" text-anchor="middle">${label}</text>`;
 			}
 			const arc = arcByKey.get(`${a}>${b}`);
-			const lift = arc ? arc.lift : 48;
+			const lift = arc ? arc.lift : 46;
 			if (a === b) {
-				return `<path class="transline" d="M ${x1 + half(a) - 8} ${baseY - 12} q 30 -${lift * 0.8} 4 -6" marker-end="url(#${arrowId})"/><text class="transtext" x="${x1 + half(a) + 34}" y="${baseY - lift * 0.8 + 10}" text-anchor="middle">${label}</text>`;
+				return `<path class="transline" d="M ${Math.round(x1 + widths[a] / 2 - 8)} ${Math.round(baseY - boxH / 2 + 4)} q 34 -${Math.round(lift * 0.8)} 4 -8" marker-end="url(#${arrowId})"/><text class="transtext" x="${Math.round(x1 + widths[a] / 2 + 36)}" y="${Math.round(baseY - boxH / 2 - lift * 0.8 + 18)}" text-anchor="middle">${label}</text>`;
 			}
-			const top = baseY - lift;
-			return `<path class="transline" d="M ${x1} ${baseY - 16} Q ${(x1 + x2) / 2} ${top} ${x2} ${baseY - 16}" marker-end="url(#${arrowId})"/><text class="transtext" x="${(x1 + x2) / 2}" y="${top + 16}" text-anchor="middle">${label}</text>`;
+			const top = baseY - boxH / 2 - lift;
+			return `<path class="transline" d="M ${Math.round(x1)} ${Math.round(baseY - boxH / 2)} Q ${Math.round((x1 + x2) / 2)} ${Math.round(top)} ${Math.round(x2)} ${Math.round(baseY - boxH / 2)}" marker-end="url(#${arrowId})"/><text class="transtext" x="${Math.round((x1 + x2) / 2)}" y="${Math.round(top + 14)}" text-anchor="middle">${label}</text>`;
 		})
 		.join("");
 
