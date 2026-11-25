@@ -33,9 +33,10 @@ pick a design, and every phase has to leave evidence behind.
 /flow start 把登录页改成手机号 + 验证码登录
 ```
 
-The agent writes an intent page (`.pi/flow/<session>/01-intent.html`) and hands you its `file://`
-address in the chat instead of stealing focus with a browser window. It waits for your answer,
-then researches, designs, cross-reviews, and only after you approve does it touch code.
+The agent writes an intent page (`.pi/flow/<session>/01-intent.html`) and puts a local link to it in
+its own reply instead of stealing focus with a browser window — pi-web opens that link in its own
+file panel, where the page's buttons work. It waits for your click, then researches, designs,
+cross-reviews, and only after you approve does it touch code.
 The full browser-driven version: run `/flow start <goal>` and follow the pages.
 
 ## How it works
@@ -61,25 +62,26 @@ can only be produced in `execute` or `report`.
 | Surface | Purpose |
 | --- | --- |
 | `flow_plan` | `start` / `setGoal` / `status` / `advance` / `confirm` / `approve` / `abort` |
-| `flow_page` | intent, decision and report pages (HTML, offline) |
+| `flow_page` | intent, decision and report pages (HTML, offline); a page with options or questions arms its own wire |
 | `flow_ask` | arms one decision: writes the page and opens a one-question loopback wire, then returns without blocking |
 | `flow_wait` | collects that decision: waits for the click on the page and returns the chosen option |
 | `/flow` | `status` · `start <goal>` · `approve` · `report` · `abort` |
 
 `setGoal` re-opens the intent phase (goal changes void the old confirmation). It is refused
 after approval — go back to `design` first. `flow_ask` needs at least two options. `flow_page` does
-**not** open a browser by default: it returns a `file://` address you can hand to the user, and only
-`open:true` launches one.
+**not** open a browser by default: it returns a relative link you put in your reply, and only
+`open:true` launches one. A page that carries `options` or `questions` answers back through the same
+one-question loopback wire as `flow_ask` (`live:false` keeps it a read-only archive).
 
 ## The pages
 
-Pages are plain HTML written to `.pi/flow/<session>/`; the chat gets a `file://` address and the
+Pages are plain HTML written to `.pi/flow/<session>/`; the chat gets a relative link and the
 browser stays closed unless you ask. Next to every page sits a `NN-<kind>.json` record holding the
 exact spec, phase, cwd, version and timestamp it was rendered from — the HTML is the output, the
 JSON is the input you can audit or re-render. Pages carry a
 four-quadrant panel (open / blind / hidden / unknown) so you can see what is *assumed*. Decision
-pages are a list of **independent single-choice questions** — never one bundled pick — and each
-choice copies a paste-ready receipt back into the chat.
+pages are a list of **independent single-choice questions** — never one bundled pick — and a live
+page submits them as one receipt; an archive page copies the same receipt for pasting.
 
 ![An intent page](docs/page-intent.png)
 

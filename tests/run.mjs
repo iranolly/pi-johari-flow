@@ -734,6 +734,82 @@ function notes2(list) {
 	);
 	check("I16 the note typed on the page comes back too", hui2.text(chosen).includes("他的理由：先别急，线上还没卡死"));
 
+	// A page written by flow_page is a question too: same wire, same relative link.
+	const hui3 = harness({ hasUI: true });
+	hui3.fire("session_start", {});
+	const pageAsk = await hui3.page({
+		kind: "intent",
+		title: "这份理解对不对？",
+		options: [
+			{ id: "confirm", label: "确认无误", cost: "代价：之后改需求要重走确认", recommended: true },
+			{ id: "correct", label: "要修正", cost: "代价：多一轮来回" },
+		],
+	});
+	const pageText = hui3.text(pageAsk);
+	check(
+		"I17 a flow_page page arms a wire and hands back a relative link",
+		pageText.includes("[打开完整说明](") && pageText.includes("flow_wait") && !pageText.includes("file:///"),
+		pageText.split("\n")[1],
+	);
+	const pageRel3 = (pageText.match(/\[打开完整说明\]\(([^)]+)\)/) ?? [])[1];
+	const pageAbs3 = pageRel3 ? join(WORK, ...pageRel3.split("/")) : "";
+	const pageHtml3 = pageAbs3 && existsSync(pageAbs3) ? readFileSync(pageAbs3, "utf8") : "";
+	const ep3 = (pageHtml3.match(/"endpoint":"([^"]+)"/) ?? [])[1];
+	const tk3 = (pageHtml3.match(/"token":"([^"]+)"/) ?? [])[1];
+	if (ep3 && tk3) {
+		await fetch(ep3, { method: "POST", headers: { "Content-Type": "text/plain" }, body: `${tk3}|confirm|` });
+	}
+	const pageChosen = await hui3.wait({ timeoutSec: 5 });
+	check(
+		"I18 a click on a flow_page page is the answer",
+		hui3.text(pageChosen).includes("确认无误") && hui3.text(pageChosen).includes("在页面上点的"),
+		hui3.text(pageChosen).slice(0, 60),
+	);
+
+	// Several independent questions answer as one receipt, never as a single id.
+	const hui4 = harness({ hasUI: true });
+	hui4.fire("session_start", {});
+	const qsAsk = await hui4.page({
+		kind: "decision",
+		title: "两个都要定",
+		questions: [
+			{ id: "Q1", prompt: "改多大？", choices: [{ id: "A", label: "只改两条" }, { id: "B", label: "改十条" }] },
+			{ id: "Q2", prompt: "谁验收？", choices: [{ id: "A", label: "我自己" }, { id: "B", label: "你跑测试" }] },
+		],
+	});
+	const qsText = hui4.text(qsAsk);
+	const qsRel = (qsText.match(/\[打开完整说明\]\(([^)]+)\)/) ?? [])[1];
+	const qsAbs = qsRel ? join(WORK, ...qsRel.split("/")) : "";
+	const qsHtml = qsAbs && existsSync(qsAbs) ? readFileSync(qsAbs, "utf8") : "";
+	check(
+		"I19 a multi-question page offers one submit, not one click per group",
+		qsHtml.includes('id="submitReceipt"') && qsHtml.includes("提交答案（还差"),
+	);
+	const qsEp = (qsHtml.match(/"endpoint":"([^"]+)"/) ?? [])[1];
+	const qsTk = (qsHtml.match(/"token":"([^"]+)"/) ?? [])[1];
+	const receiptText = "[flow] 决策 · 逐题作答 Q1=A（只改两条）；Q2=B（你跑测试）";
+	if (qsEp && qsTk) {
+		await fetch(qsEp, { method: "POST", headers: { "Content-Type": "text/plain" }, body: `${qsTk}|${receiptText}` });
+	}
+	const qsChosen = await hui4.wait({ timeoutSec: 5 });
+	check("I20 a submitted receipt comes back from flow_wait", hui4.text(qsChosen).includes(receiptText), hui4.text(qsChosen).slice(0, 60));
+
+	// An archive page must not leave a wire behind.
+	const hui5 = harness({ hasUI: true });
+	hui5.fire("session_start", {});
+	const archived = await hui5.page({
+		kind: "decision",
+		title: "只看不改",
+		live: false,
+		options: [{ id: "A", label: "方案 A" }, { id: "B", label: "方案 B" }],
+	});
+	check(
+		"I21 live:false leaves a read-only page and no wire",
+		!hui5.text(archived).includes("flow_wait") && hui5.widget() === undefined,
+	);
+	const nothing = await hui5.wait({ timeoutSec: 1 });
+	check("I22 an archive page cannot be collected", hui5.text(nothing).includes("没有等你拍板"));
+
 }
 
 /* ------------------------------------------------------------------ summary */

@@ -66,7 +66,7 @@ idle → intent → research → design → review → approved → execute → 
 
 `johari` 面板四栏都要填。确认页只有**一个**决策（这理解对不对），所以用 `options` 给「确认无误 / 需要修正 / 我补充一下」，并包含一个「先别动」项。
 
-页面生成后：把工具返回的打开地址贴给用户（默认不自动打开浏览器），一句话请用户确认，**停下**。不要在同一轮继续调研。
+页面生成后：把工具返回的 `[打开完整说明](路径)` **原样写进你这条回复**，一句话请用户点选，然后**立刻调用 `flow_wait`**。带 `options` / `questions` 的页面自带一条只活这道题的本机通道，用户点完答案直接回到对话，不用复制回执。
 用户修正 → `flow_plan {action:"setGoal", goal:"<修正后的原话>"}`（回 intent 且需重新确认）重出页面，不要自己替用户拍板。
 用户确认 → `flow_plan {action:"confirm", reason:"<用户原话>"}`，再 `advance to="research"`。
 
@@ -96,7 +96,7 @@ idle → intent → research → design → review → approved → execute → 
 每个方案必须写：影响面（文件清单）、成本（人时/复杂度）、可回滚性、失败的早期信号。
 
 派 `plan` / `impl` sub agent 并行出草案，你负责**收敛与取舍**，不要直接采纳第一份。
-成型后 `flow_page {kind:"decision"}`：选项 = 方案，`cost` 写代价行，`recommended` 标推荐项。
+成型后 `flow_page {kind:"decision"}`：选项 = 方案，`cost` 写代价行，`recommended` 标推荐项；随后把相对链接写进回复并 `flow_wait`。
 
 ### ④ review — 交叉评审
 
@@ -129,15 +129,15 @@ idle → intent → research → design → review → approved → execute → 
 3. 出现不可逆操作（删数据、`git push --force`、改生产配置）。
 4. 同一处连续两次修复失败 —— 说明理解错了，回去 `intent`/`research`。
 
-`flow_ask` 现在只**准备**一道题，分两步走：
+`flow_ask` 与带选项的 `flow_page` 都是**两步**：
 
-1. `flow_ask` 写决策页、开一条只活这道题的本机通道，立刻返回；选项里必须写代价（`cost`）。
+1. 工具写页面、开一条只活这道题的本机通道，立刻返回；选项里必须写代价（`cost`）。
 2. 把它返回的 `[打开完整说明](路径)` 原样写进你这条回复，**然后立刻调用 `flow_wait`** 等用户点选。链接必须在你自己的回复里：放在回复里，pi-web 会在自己的面板（侧边）打开；放在工具结果里只会开一个新标签页。
 
-用户点了（还可以在页面上顺手补一句理由），`flow_wait` 就带着答案返回，`flow_ask` 记下决定；没点（默认等十分钟）就把题原样还给用户，不要替他选。本机通道只活这一道题，页面过期后再点会提示「回对话里说」。
+用户点了（还可以在页面上顺手补一句理由），`flow_wait` 就带着答案返回，工具记下决定；没点（默认等十分钟）就把题原样还给用户，不要替他选。本机通道只活这一道题，页面过期后再点会提示「回对话里说」。`questions` 多题页面要点「提交答案」一起交，不能只选一题就交。
 
 `flow_ask` 写法：`question` 是能回答的选择题；`context` 讲清「为什么现在必须决定 + 已经验证了什么」；
-`options` ≥2 且每条带 `detail` 与 `cost`。它会在终端阻塞取答案，同时生成 HTML 简报。
+`options` ≥2 且每条带 `detail` 与 `cost`。它立刻返回，不阻塞；答案靠 `flow_wait` 收。
 
 ### ⑦ report — 完成报告
 

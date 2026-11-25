@@ -4,6 +4,32 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.4.3] — 2026-11-25
+
+Only `flow_ask` got the two-step treatment in 0.4.0. Every page written by `flow_page` — the intent
+page above all — still handed the model an absolute `file://` address to paste verbatim, and had no
+wire back: its buttons copied a receipt. So a page that asked a question could not answer it.
+
+### Fixed
+
+- **`flow_page` pages that carry `options` or `questions` are questions too.** The wire is armed
+  before the page is rendered, so the page is born able to answer; the reply gets the same
+  relative `[打开完整说明](路径)` link `flow_ask` uses, and `flow_wait` collects the click.
+- **The reply no longer carries a `file://` address.** A bare `file:` URL is not an autolink, so
+  the model's "open this" line was plain text — nothing to click. The tool result now hands back
+  the relative link and says to copy it into the reply.
+- **Multi-question pages submit as one receipt.** Chrome cannot send one id for N groups, so a
+  live questions page gets a submit button (disabled until every group has a pick) and the server
+  accepts the receipt text; `flow_wait` records it as the decision.
+- `live:false` keeps a page as a read-only archive — and that is the only case where buttons fall
+  back to the clipboard receipt.
+
+### Tests
+
+- 105 checks (was 99): I17 a `flow_page` page arms a wire and hands back a relative link;
+  I18 a click on that page is the answer; I19 a multi-question page offers one submit;
+  I20 a submitted receipt comes back from `flow_wait`; I21/I22 `live:false` leaves no wire.
+
 ## [0.4.2] — 2026-11-23
 
 The page read as two columns bolted together: a 64px rail of numbers, a gap, then the text — with

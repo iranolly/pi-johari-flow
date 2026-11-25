@@ -33,7 +33,13 @@ export interface AnswerWaiter {
 
 export interface AnswerServerOptions {
 	/** Option ids the page may return; anything else is refused. */
-	ids: string[];
+	ids?: string[];
+	/**
+	 * Accept a free-form receipt instead of one id. A page with N questions cannot
+	 * answer with a single id — the person answers all groups, then submits the
+	 * receipt that lists each group's choice.
+	 */
+	receipt?: boolean;
 }
 
 function send(res: ServerResponse, status: number, body: string): void {
@@ -71,7 +77,8 @@ function readBody(req: IncomingMessage, limit = 4096): Promise<string> {
  * caller can fall back to the terminal picker instead of hanging.
  */
 export async function startAnswerServer(opts: AnswerServerOptions): Promise<AnswerWaiter> {
-	const ids = new Set(opts.ids);
+	const ids = new Set(opts.ids ?? []);
+	const receipt = opts.receipt === true;
 	const token = randomBytes(16).toString("hex");
 	let settled = false;
 	let resolveAnswer: (pick: AnswerPick | null) => void = () => {};
@@ -99,19 +106,31 @@ export async function startAnswerServer(opts: AnswerServerOptions): Promise<Answ
 			send(res, 404, "not found");
 			return;
 		}
-		void readBody(req)
+		void readBody(req, receipt ? 8192 : 4096)
 			.then((body) => {
-				const [gotToken, id, rawNote] = body.replace(/\r?\n/g, " ").split("|");
+				const [gotToken, ...rest] = body.replace(/\r?\n/g, " ").split("|");
 				if (gotToken !== token) {
 					send(res, 403, "bad token");
 					return;
 				}
-				if (!id || !ids.has(id)) {
-					send(res, 400, `unknown option: ${id ?? ""}`);
-					return;
-				}
 				if (settled) {
 					send(res, 409, "already answered");
+					return;
+				}
+				if (receipt) {
+					// The receipt text is the answer: labels may contain `|`, so re-join.
+					const text = rest.join("|").trim().slice(0, 4000);
+					if (!text) {
+						send(res, 400, "empty receipt");
+						return;
+					}
+					finish({ id: text });
+					send(res, 200, "ok");
+					return;
+				}
+				const [id, rawNote] = rest;
+				if (!id || !ids.has(id)) {
+					send(res, 400, `unknown option: ${id ?? ""}`);
 					return;
 				}
 				const note = (rawNote ?? "").trim().slice(0, 600) || undefined;

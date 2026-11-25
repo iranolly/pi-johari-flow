@@ -419,6 +419,22 @@ function plainSummary(spec: PageSpec): string {
 	return lines.join("\n");
 }
 
+/**
+ * Every clickable answer a page offers, in one list: plain options first, then one
+ * entry per question choice. `flow_page` and `flow_ask` both arm a wire from this,
+ * so a page that carries a decision is a question no matter which tool wrote it.
+ */
+function pageChoices(spec: PageSpec): Array<{ id: string; label: string; detail?: string }> {
+	const out: Array<{ id: string; label: string; detail?: string }> = [];
+	for (const o of spec.options ?? []) out.push({ id: o.id, label: o.label, detail: o.detail });
+	for (const q of spec.questions ?? []) {
+		for (const c of q.choices) {
+			out.push({ id: `${q.id}:${c.id}`, label: `${q.prompt} → ${c.label}`, detail: c.detail });
+		}
+	}
+	return out;
+}
+
 /* --------------------------------------------------------------- gate rules */
 
 /** Shell tools can write files without ever calling write/edit. */
@@ -759,6 +775,8 @@ interface PendingAsk {
 	options: Array<{ id: string; label: string; detail?: string; cost?: string }>;
 	waiter: AnswerWaiter;
 	pageRel: string;
+	/** A page with N questions answers with one receipt (all groups), not one id. */
+	receipt?: boolean;
 	timer?: NodeJS.Timeout;
 }
 
@@ -773,7 +791,7 @@ const pendingAsks = new Map<string, PendingAsk>();
 const PREPARED_TTL_MS = 20 * 60 * 1000;
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.4.2";
+const PKG_VERSION = "0.4.3";
 
 /* --------------------------------------------------------------------- init */
 
@@ -921,9 +939,9 @@ export default function johariFlow(pi: ExtensionAPI) {
 							`流程已开始 · ${PHASE_CN[state.phase]}`,
 							"",
 							"下一步（本阶段硬性要求）：",
-							"1. 调用 `flow_page {kind:\"intent\"}` 出意图确认页：复述、假设、不在范围内、风险、待确认项。",
-							"2. 把工具返回的「打开地址」原样贴给用户，请他打开页面确认或修正，然后停下等待。",
-							"3. 用户确认后 `flow_plan {action:\"confirm\"}`，再 `flow_plan {action:\"advance\", to:\"research\"}`。",
+							"1. 调用 `flow_page {kind:\"intent\"}` 出意图确认页：复述、假设、不在范围内、风险、待确认项。确认题必须写成 `options`（或 `questions`）：写在正文里的一句话点不了。",
+							"2. 把工具返回的 `[打开完整说明](路径)` 原样写进你这条回复，然后 **立刻** 调用 `flow_wait` 等用户点选。",
+							"3. 用户点「确认无误」后 `flow_plan {action:\"confirm\"}`，再 `flow_plan {action:\"advance\", to:\"research\"}`；点「要修正」就按他的原话 `setGoal` 重出页面。",
 						].join("\n"),
 					);
 				}
@@ -1088,11 +1106,12 @@ export default function johariFlow(pi: ExtensionAPI) {
 		name: "flow_page",
 		label: "Flow · HTML 展示页",
 		description:
-			"渲染一个 Johari 展示页并在浏览器打开：intent 意图确认 / decision 决策简报 / report 完成报告。页面自带四象限面板与可点击回执。",
-		promptSnippet: "生成并打开 Johari 展示页（intent / decision / report）",
+			"渲染一个 Johari 展示页：intent 意图确认 / decision 决策简报 / report 完成报告。页面自带四象限面板；带选项或问题时，它同时开一条只活这道题的本机通道，在页面上点选项就直接作答。",
+		promptSnippet: "生成 Johari 展示页（带选项时可直接作答）",
 		promptGuidelines: [
 			"Use flow_page {kind:\"intent\"} before any research so the user can confirm your understanding of the request.",
 			"Never bundle independent decisions into one options list: when a page asks N questions, pass `questions` (N groups, each with its own choices) so the user answers them one by one.",
+			"A page that asks the user something must carry `options` or `questions`. Questions written as prose (inside `sections`) cannot be clicked and cannot be answered — the page becomes a read-only archive.",
 			"Use `options` only when the page has exactly one decision, and then include a do-nothing option.",
 			"Use flow_page {kind:\"report\"} when the work is done; every conclusion in it must cite evidence.",
 			"Fill the johari panel on every flow_page call — an empty quadrant is a claim in itself.",
@@ -1129,6 +1148,12 @@ export default function johariFlow(pi: ExtensionAPI) {
 						"是否顺便在浏览器打开，默认 false（不打开）：默认做法是把页面地址贴给用户，由他自己打开",
 				}),
 			),
+			live: Type.Optional(
+				Type.Boolean({
+					description:
+						"页面是否连回对话，默认 true：带选项或问题时开一条只活这道题的本机通道，点选项就直接作答；设 false 只生成离线档案页",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (params.kind === "report" && state.phase !== "execute" && state.phase !== "report") {
@@ -1152,6 +1177,30 @@ export default function johariFlow(pi: ExtensionAPI) {
 				},
 				css: params.css,
 			};
+			// A page that carries a decision is a question: arm the wire *before* rendering,
+			// so the page is born able to answer (a link in the reply, a click, the turn
+			// continues — same path as flow_ask, no copy-paste).
+			const choices = pageChoices(spec);
+			const receipt = (spec.questions?.length ?? 0) > 0;
+			let waiter: AnswerWaiter | null = null;
+			if (choices.length > 0 && params.live !== false && ctx.hasUI) {
+				try {
+					waiter = await startAnswerServer({
+						ids: receipt ? [] : choices.map((c) => c.id),
+						receipt,
+					});
+				} catch (err) {
+					waiter = null;
+					try {
+						ctx.ui.notify(
+							`页面作答通道没起来（页面只能复制回执）：${err instanceof Error ? err.message : String(err)}`,
+							"warning",
+						);
+					} catch {
+						/* no UI */
+					}
+				}
+			}
 			const html = renderPage(spec, {
 				phase: PHASE_CN[state.phase],
 				cwd: ctx.cwd,
@@ -1159,11 +1208,14 @@ export default function johariFlow(pi: ExtensionAPI) {
 				project: basename(ctx.cwd),
 				version: PKG_VERSION,
 				dir,
+				live: waiter ? { endpoint: waiter.endpoint, token: waiter.token } : undefined,
 			});
 			let absPath: string;
 			try {
 				absPath = await writePage(dir, params.kind, html);
 			} catch (err) {
+				// No page means no way back from a click.
+				waiter?.close();
 				return reply(
 					[
 						`页面没写成：${err instanceof Error ? err.message : String(err)}`,
@@ -1207,20 +1259,60 @@ export default function johariFlow(pi: ExtensionAPI) {
 				/* cosmetic */
 			}
 
+			// Arm the wait, so `flow_wait` can collect the click. One open question per
+			// session: a new one replaces the old wire and all of its timers.
+			if (waiter) {
+				const open = waiter;
+				const key = sessionSlug(ctx);
+				const stale = pendingAsks.get(key);
+				if (stale) {
+					stale.waiter.close();
+					clearTimeout(stale.timer);
+					pendingAsks.delete(key);
+				}
+				const pending: PendingAsk = {
+					question: params.title,
+					labels: choices.map((c) => `${c.id}) ${c.label}`),
+					options: choices,
+					waiter: open,
+					pageRel: relPath,
+					receipt,
+					timer: undefined,
+				};
+				const timer = setTimeout(() => {
+					pendingAsks.delete(key);
+					open.close();
+				}, PREPARED_TTL_MS);
+				timer.unref?.();
+				pending.timer = timer;
+				pendingAsks.set(key, pending);
+				try {
+					ctx.ui.setWidget("johari · 待拍板", [
+						`⏳ 等你拍板：${params.title}`,
+						"页面已经备好，点里面的选项就行。",
+					]);
+					ctx.ui.setStatus("johari", "等你拍板");
+				} catch {
+					/* fire-and-forget */
+				}
+			}
+
 			return reply(
 				[
 					`已生成 ${params.kind} 页面：\`${relPath}\``,
-					`打开地址（原样贴给用户，不要改写）：${pathToFileURL(absPath).href}`,
+					`打开地址（原样写进你这条回复，不要改写）：[打开完整说明](${relPath})`,
 					wroteRecord ? `配置记录：\`${relRecord}\`` : "配置记录：没写成（页面本身正常）",
 					opened ? "（本次按 open:true 已自动打开）" : "（默认不自动打开）",
 					"",
 					plainSummary(spec),
 					"",
 					"---",
-					"**接下来必须做的一件事**：把「打开地址」贴给用户，请他打开页面确认/选择（选项点击即复制回执），然后 **停下等待**。",
+					waiter
+						? "**接下来必须做的一件事**：把上面那行链接原样写进你这条回复，然后 **立刻** 调用 `flow_wait` 等用户点选；页面上的选择就是答案，不需要复制回执。"
+						: "**接下来必须做的一件事**：把上面那行链接原样写进你这条回复，请用户看完在对话里回你。这一页没有可提交的选项。",
 					"不要在同一轮里继续推进阶段。",
 				].join("\n"),
-				{ page: relPath, record: relRecord, url: pathToFileURL(absPath).href },
+				{ page: relPath, record: relRecord, url: pathToFileURL(absPath).href, awaiting: Boolean(waiter) },
 			);
 		},
 	});
@@ -1488,7 +1580,9 @@ export default function johariFlow(pi: ExtensionAPI) {
 			try {
 				ctx.ui.setWidget("johari · 待拍板", [
 					`⏳ 等你拍板：${pending.question}`,
-					`${pending.options.length} 个选项，每个都写了代价；在页面上点一项就继续。`,
+					pending.receipt
+						? `${pending.labels.length} 个候选，每题选一个；全部选好后点「提交答案」。`
+						: `${pending.options.length} 个选项，每个都写了代价；在页面上点一项就继续。`,
 				]);
 				ctx.ui.setStatus("johari", "等你拍板");
 			} catch {
@@ -1530,7 +1624,28 @@ export default function johariFlow(pi: ExtensionAPI) {
 					{ answered: false },
 				);
 			}
-			const picked = pending.options.find((o) => o.id === pick.id);
+			const picked = pending.receipt ? undefined : pending.options.find((o) => o.id === pick.id);
+			if (pending.receipt) {
+				// A multi-question page answers with the whole receipt, not a choice id.
+				const text = pick.id.trim();
+				state.decisions.push({
+					question: pending.question,
+					answer: text,
+					options: pending.labels,
+					at: nowIso(),
+				});
+				persist(pi, ctx);
+				return reply(
+					[
+						"用户已在页面上作答：",
+						"",
+						text,
+						"",
+						"下一步：按这份作答继续。若它改变了已批准方案的边界，先更新决策页再动手。",
+					].join("\n"),
+					{ answered: true, receipt: text },
+				);
+			}
 			if (!picked) {
 				persist(pi, ctx);
 				return reply(`页面返回了「${pick.id}」，对不上任何选项，没有记成决定。`, { answered: false });

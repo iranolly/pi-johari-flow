@@ -893,6 +893,8 @@ footer{
   border-radius:5px;padding:7px 13px;cursor:pointer;transition:.13s
 }
 .btn:hover{border-color:var(--accent-dim);color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:disabled:hover{border-color:var(--line-2);color:var(--fg-dim)}
 /* screenshots: inlined as data URIs, tiled two-up, click for full size */
 .shots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .shots.single{grid-template-columns:1fr}
@@ -956,7 +958,7 @@ function kindPrefix(spec: PageSpec): string {
 	return spec.kind === "intent" ? "[flow] 意图" : spec.kind === "decision" ? "[flow] 决策" : "[flow] 报告";
 }
 
-function renderQuestions(spec: PageSpec): string {
+function renderQuestions(spec: PageSpec, live?: PageMeta["live"]): string {
 	const questions = spec.questions ?? [];
 	if (!questions.length) return "";
 	const items = questions
@@ -984,7 +986,9 @@ function renderQuestions(spec: PageSpec): string {
   <div id="receiptText">尚未作答 —— 每组点一个，可随时改选，组与组之间互不影响。</div>
   <textarea id="receiptNote" placeholder="补充条件（可留空）：例如「如果评审发现安全问题就回来问我」"></textarea>
   <button class="btn" id="copyReceipt" type="button">复制答案回执</button>
+  ${live ? '<button class="btn" id="submitReceipt" type="button" disabled>提交答案</button>' : ""}
 </div>
+${live ? '<div class="livebar" id="livebar" role="status"></div>' : ""}
 </div></section>`;
 }
 
@@ -1446,8 +1450,8 @@ function renderPageInner(
   <div class="quadrow">${renderQuadrant(spec.johari)}</div>
 
   ${sections}
-  ${renderQuestions(spec)}
-  ${renderOptions(spec, meta.live)}
+  ${renderQuestions(spec, meta.live)}
+  ${renderOptions(spec, spec.questions?.length ? undefined : meta.live)}
 
   <footer>
     <button class="btn" type="button" id="copyAll">复制整页文本</button>
@@ -1553,6 +1557,16 @@ function renderPageInner(
     var el = document.getElementById('receiptText');
     if (el) el.textContent = buildReceipt();
   }
+  // A multi-question page answers only once every group has a pick: the submit
+  // button says how many are still missing, so a half-answer never leaves.
+  function syncSubmit(){
+    var btn = document.getElementById('submitReceipt');
+    if (!btn) return;
+    var total = document.querySelectorAll('.qitem').length;
+    var done = Object.keys(chosen).length;
+    btn.disabled = done < total;
+    btn.textContent = done < total ? '提交答案（还差 ' + (total - done) + ' 题）' : '提交答案';
+  }
   document.querySelectorAll('.choice').forEach(function(btn){
     btn.addEventListener('click', function(){
       var q = btn.getAttribute('data-q');
@@ -1566,12 +1580,34 @@ function renderPageInner(
         btn.classList.add('on');
       }
       refreshReceipt();
+      syncSubmit();
     });
   });
+  syncSubmit();
   var noteInput = document.getElementById('receiptNote');
   if (noteInput) noteInput.addEventListener('input', refreshReceipt);
   var copyReceipt = document.getElementById('copyReceipt');
   if (copyReceipt) copyReceipt.addEventListener('click', function(){ copy(buildReceipt()); });
+  // The live submit: one receipt, one answer, the turn continues.
+  var submitReceipt = document.getElementById('submitReceipt');
+  if (submitReceipt) submitReceipt.addEventListener('click', function(){
+    if (!LIVE) return;
+    var bar = document.getElementById('livebar');
+    var text = buildReceipt();
+    submitReceipt.disabled = true;
+    submitReceipt.textContent = '提交中…';
+    fetch(LIVE.endpoint, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: LIVE.token + '|' + text })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function(){
+        if (bar) { bar.className = 'livebar ok'; bar.textContent = '已记下你的作答。回到对话，下一步已经开始了。'; }
+        submitReceipt.textContent = '已提交';
+      })
+      .catch(function(){
+        if (bar) { bar.className = 'livebar warn'; bar.textContent = '没连上对话（这一页可能已经过期）：点「复制答案回执」贴回对话也一样。'; }
+        syncSubmit();
+        copy(text);
+      });
+  });
   document.getElementById('copyAll').addEventListener('click', function(){
     copy(document.querySelector('.wrap').innerText);
   });
