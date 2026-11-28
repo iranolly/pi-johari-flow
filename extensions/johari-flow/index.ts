@@ -839,7 +839,7 @@ function watchUnclaimed(pi: ExtensionAPI, ctx: ExtensionContext, key: string, pe
 }
 
 /** Kept in step with package.json by hand: pages show it in the header chip. */
-const PKG_VERSION = "0.4.5";
+const PKG_VERSION = "0.4.6";
 
 /* --------------------------------------------------------------------- init */
 

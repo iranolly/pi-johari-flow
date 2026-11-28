@@ -345,6 +345,21 @@ const firstLine = (s) => String(s).split("\n")[0];
 	check("D2g a text file renamed to .png is refused", shotHtml.includes("不像图片"));
 	check("D2h a markdown image line becomes a figure", /<figure class="shot"><img src="data:image\/png/.test(shotHtml));
 
+	// The phone tier is a real contract, not a styling preference: the desktop
+	// title is 30-52px, which reads as a poster on a 390px screen, so a narrow
+	// viewport must cap it and the sticky bar must give up its third row.
+	const phoneCss = shotHtml.slice(shotHtml.lastIndexOf("@media (max-width:720px)"));
+	const phoneH1 = phoneCss.match(/h1\{font-size:clamp\((\d+)px,([\d.]+)vw,(\d+)px\)/);
+	check(
+		"D2o phones cap the title instead of scaling it",
+		shotHtml.includes("viewport-fit=cover") && Boolean(phoneH1) && Number(phoneH1?.[3]) <= 30 && Number(phoneH1?.[1]) >= 20,
+		phoneH1 ? phoneH1[0].slice(0, 46) : "no phone h1 rule",
+	);
+	check(
+		"D2p the sticky bar drops a row on narrow phones",
+		/\.meta,\.spacer,\.chip\.ver\{display:none\}/.test(shotHtml),
+	);
+
 	const shotPage = await h.page({
 		kind: "report",
 		title: "截图页",

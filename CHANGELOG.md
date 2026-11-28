@@ -4,6 +4,36 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.4.6] — 2026-11-28
+
+The pages were written for a 1080px column and only got their padding squeezed below 720px, so a
+phone opened on the title: 30px serif across two or three lines, a sticky bar stacked into three
+rows, and the first section pushed off screen.
+
+### Fixed
+
+- **The phone has its own type scale instead of a squeezed desktop one.** Below 720px the title is
+  `clamp(22px, 6.1vw, 28px)` at 1.24 line-height (was a flat 30px), the kicker, lede, section
+  headings and lead line step down with it, and hero padding drops from 40px to 26px, so the first
+  section now starts around 300px instead of 500px. On a 390px screen that moves the title from
+  201px down to 91px and cuts a full page from 4598px to 3980px.
+- **The sticky bar stops wrapping into three rows.** Below 480px it drops the session/time line and
+  the version chip (the footer still carries the version), which leaves brand + kind + phase on one
+  row at 390px and two rows at 320px.
+- **Touch targets are 40px minimum.** Buttons, TOC pills and choice chips had 29–36px heights.
+- **Hover styling no longer sticks after a tap.** Under `@media (hover:none)` the option row keeps
+  its resting border instead of staying in the hovered state.
+- Tables, pre blocks, quote indents and the toast (now inset from the safe area) got phone-sized
+  padding; `viewport-fit=cover` and `text-size-adjust:100%` stop iOS from resizing text on its own.
+
+Desktop rendering is unchanged: screenshots at 1280px are pixel-identical to 0.4.5 outside the
+session clock.
+
+### Tests
+
+- 112 checks (was 110): D2o phones cap the title instead of scaling it; D2p the sticky bar drops a
+  row on narrow phones.
+
 ## [0.4.5] — 2026-11-25
 
 Two pages were reported in one go: a click that never reached the agent, and a state diagram whose

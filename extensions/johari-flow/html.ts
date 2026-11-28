@@ -542,7 +542,7 @@ const CSS = `
   --sans:ui-sans-serif,-apple-system,"Segoe UI Variable Display","Segoe UI",Inter,"Helvetica Neue",Arial,sans-serif;
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Songti SC","Source Han Serif SC",serif;
 }
-html{color-scheme:dark;background:#0a0b0d}
+html{color-scheme:dark;background:#0a0b0d;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 body{
   margin:0;min-height:100vh;background:
     radial-gradient(1200px 600px at 15% -10%, #16181d 0%, transparent 60%),
@@ -808,8 +808,9 @@ textarea.asknote:focus{outline:none;border-color:var(--accent-dim)}
   .quad{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:640px){
-  .quad{grid-template-columns:1fr}
-  section h2{font-size:20px}
+  .quad{grid-template-columns:1fr;gap:10px;margin:22px 0 6px}
+  section h2{font-size:19px}
+  .q{padding:14px 15px}
 }
 @media (max-width:720px){.loopback svg{width:100%!important}}
 
@@ -913,11 +914,64 @@ footer{
   text-transform:uppercase;padding:9px 18px;border-radius:6px;transition:.18s ease;z-index:60;font-weight:600
 }
 #toast.on{opacity:1;transform:translate(-50%,0)}
+/* phones: the desktop tier sizes are poster-scale on a 390px screen, so the
+   whole top of the page steps down together — title, kicker, hero padding and
+   the sticky bar — instead of shrinking the title alone and leaving the rest
+   out of proportion. */
 @media (max-width:720px){
-  .wrap,.topbar .inner{padding-left:18px;padding-right:18px}
-  section{padding:28px 0}
-  header.hero{padding:40px 0 28px}
+  .wrap,.topbar .inner{padding-left:16px;padding-right:16px}
+  .topbar .inner{padding-top:9px;padding-bottom:9px;gap:8px 10px}
+  .brand{font-size:10px;letter-spacing:.16em}
+  .chip{font-size:9.5px;letter-spacing:.1em;padding:2px 8px}
+  .meta{font-size:10px}
+  section{padding:24px 0}
+  header.hero{padding:26px 0 22px}
+  .kicker{font-size:10px;letter-spacing:.18em;gap:8px;margin-bottom:12px}
+  h1{font-size:clamp(22px,6.1vw,28px);line-height:1.24;letter-spacing:-.012em;margin:0 0 14px;text-wrap:pretty}
+  .lede{font-size:15.5px;line-height:1.6}
+  section h2{line-height:1.3}
+  .lead{font-size:15.5px;line-height:1.62;margin-bottom:16px}
+  .num{font-size:10px}
+  .toc{gap:6px;margin:16px 0 0}
+  .toc a{font-size:12.5px;padding:7px 12px;min-height:40px;display:inline-flex;align-items:center}
   .shots{grid-template-columns:1fr}
+  .opt{padding:13px 14px;gap:10px}
+  .opt .label{font-size:14.5px}
+  .opt .detail{font-size:13px}
+  .qitem{padding:14px 15px}
+  .qhead{gap:8px}
+  .qtext{font-size:14.5px}
+  .choice{padding:9px 12px;min-height:40px}
+  .btn{padding:9px 13px;min-height:40px}
+  table{font-size:13px}
+  th,td{padding:8px 10px}
+  pre{padding:12px}
+  pre code{font-size:11.5px}
+  blockquote{font-size:15.5px;padding-left:14px}
+  .stat .v{font-size:34px}
+  .fact{padding:10px 12px}
+  .fig{padding:8px}
+  .tl{padding-left:20px}
+  .receipt{padding:12px 13px}
+  #zoom{padding:10px}
+  #toast{left:16px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateY(14px);text-align:center}
+  #toast.on{transform:translateY(0)}
+  footer{margin-top:36px;padding-top:18px;gap:12px}
+}
+/* narrow phones: drop the session/time line and the version chip (the footer
+   already carries it) so the sticky bar settles into one row instead of three. */
+@media (max-width:480px){
+  .meta,.spacer,.chip.ver{display:none}
+  .topbar .inner{row-gap:7px}
+  header.hero{padding:22px 0 18px}
+  h1{margin-bottom:12px}
+}
+/* touch: a hover rule that sticks after a tap reads as a selection. */
+@media (hover:none){
+  .opt:hover{border-color:var(--line);background:var(--panel);transform:none}
+  .choice:hover{border-color:var(--line-2)}
+  .btn:hover{border-color:var(--line-2);color:var(--fg-dim)}
+  .toc a:hover{color:var(--fg-dim);border-color:var(--line)}
 }
 @media print{
   body{background:#fff;color:#111}
@@ -1465,7 +1519,7 @@ function renderPageInner(
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${esc(spec.title)} · Johari Flow</title>
 <style>${CSS}</style>${spec.css ? `<style>/* page-level override */\n${sanitizeCss(spec.css)}</style>` : ""}
 </head>
@@ -1473,7 +1527,7 @@ function renderPageInner(
 <div class="topbar"><div class="inner">
   <span class="brand">PI <b>/</b> JOHARI FLOW</span>
   <span class="chip kind">${esc(KIND_LABEL[spec.kind])}</span>
-  <span class="chip">阶段 ${esc(meta.phase)}</span>${meta.project ? `<span class="chip">${esc(meta.project)}</span>` : ""}${meta.version ? `<span class="chip">v${esc(meta.version)}</span>` : ""}
+  <span class="chip">阶段 ${esc(meta.phase)}</span>${meta.project ? `<span class="chip">${esc(meta.project)}</span>` : ""}${meta.version ? `<span class="chip ver">v${esc(meta.version)}</span>` : ""}
   <span class="spacer"></span>
   <span class="meta">会话 ${esc(meta.sessionId)} ｜ ${esc(new Date().toLocaleString("zh-CN", { hour12: false }))}</span>
 </div></div>
